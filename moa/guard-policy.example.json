@@ -1,0 +1,23 @@
+{
+  "_comment": "pi-moa scope-guard 策略示例（开源版）。复制为 ~/.pi/agent/moa/guard-policy.json 并按需修改。~ 展开为当前用户主目录。protectedExact/parts 留空数组则仅用内建默认。",
+  "version": "1.0-example",
+  "protectedExact": [
+    "~/.pi/agent/auth.json",
+    "~/.config/your-shell/secrets.env"
+  ],
+  "protectedParts": ["/.ssh/", "/.gnupg/", "/.aws/", "/.git/", "/.env"],
+  "subagent": {
+    "restrictToCwd": true,
+    "blockBashWritesOutsideCwd": true
+  },
+  "pii": {
+    "enabled": true,
+    "action": "redact",
+    "patterns": {
+      "your_company_key_prefix": "yourco-[A-Za-z0-9]{20,}"
+    }
+  },
+  "budget": {
+    "sessionTokenWarnAt": 500000
+  }
+}
