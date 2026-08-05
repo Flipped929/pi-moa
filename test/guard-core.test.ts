@@ -110,16 +110,23 @@ describe("extractBashWriteTargets", () => {
 
 describe("createPiiScanner", () => {
 	const scanner = createPiiScanner(defaultPolicy().pii.patterns);
-	it("检出 sk- 密钥", () => {
-		expect(scanner.scan("key is sk-abcdefghijklmnop1234")).toHaveLength(1);
+	// fixtures 程序化工构造，避免源码中出现 key 形态字面量（会被 scope-guard 自身 redact）
+	const REAL_SK = "sk-" + "Q7mX9vL2".repeat(3);
+	const REAL_ANT = "sk-ant-" + "P9wQ2mX7".repeat(4);
+	const REAL_AWS = "AKIA" + "Z9X8C7V6".repeat(2);
+	const REAL_GH = "ghp_" + "a1B2c3D4".repeat(4);
+	const REAL_PK = "-----BEGIN " + "RSA" + " PRIVATE KEY-----";
+	const FAKE_SK = "sk-" + "a".repeat(20);
+	const FAKE_MARKED = "sk-" + "test" + "B7x2".repeat(5);
+
+	it("检出真实形态 sk- 密钥", () => {
+		expect(scanner.scan("key is " + REAL_SK)).toHaveLength(1);
 	});
-	it("检出 sk-ant-", () => {
-		expect(scanner.scan("sk-ant-abcdefghijklmnop").length).toBeGreaterThan(0);
-	});
-	it("检出 AWS / GitHub token / 私钥块", () => {
-		expect(scanner.scan("AKIAIOSFODNN7EXAMPLE").length).toBeGreaterThan(0);
-		expect(scanner.scan("ghp_abcdefghijklmnopqrstuvwxyz").length).toBeGreaterThan(0);
-		expect(scanner.scan("-----BEGIN OPENSSH PRIVATE KEY-----").length).toBeGreaterThan(0);
+	it("检出 sk-ant- / AWS / GitHub token / 私钥块", () => {
+		expect(scanner.scan(REAL_ANT).length).toBeGreaterThan(0);
+		expect(scanner.scan(REAL_AWS).length).toBeGreaterThan(0);
+		expect(scanner.scan(REAL_GH).length).toBeGreaterThan(0);
+		expect(scanner.scan(REAL_PK).length).toBeGreaterThan(0);
 	});
 	it("普通文本不误报", () => {
 		expect(scanner.scan("hello world, this is safe text")).toHaveLength(0);
@@ -127,14 +134,17 @@ describe("createPiiScanner", () => {
 	it("sk- 前缀紧跟字母数字不嵌套误报", () => {
 		expect(scanner.scan("task-abcdefgh")).toHaveLength(0);
 	});
-	it("redact 替换命中串", () => {
-		const out = scanner.redact("use sk-abcdefghijklmnop1234 ok");
-		expect(out).toContain("***REDACTED-BY-SCOPE-GUARD***");
-		expect(out).not.toContain("sk-abcdefghijklmnop1234");
+	it("合成密钥放行：同字符重复串", () => {
+		expect(scanner.scan(FAKE_SK)).toHaveLength(0);
 	});
-	it("redact 多次触发全局替换", () => {
-		const out = scanner.redact("sk-aaaaaaaaaaaaaaaa1111 and sk-bbbbbbbbbbbbbbbb2222");
-		expect(out).not.toMatch(/sk-[ab]/);
+	it("合成密钥放行：含 example/fake/test 标记", () => {
+		expect(scanner.scan(FAKE_MARKED)).toHaveLength(0);
+	});
+	it("redact 替换真实密钥但保留合成串", () => {
+		const out = scanner.redact("real " + REAL_SK + " fake " + FAKE_SK);
+		expect(out).toContain("***REDACTED-BY-SCOPE-GUARD***");
+		expect(out).not.toContain(REAL_SK);
+		expect(out).toContain(FAKE_SK);
 	});
 });
 

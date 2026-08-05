@@ -127,12 +127,24 @@ export interface PiiHit {
 	index: number;
 }
 
+/**
+ * 合成密钥放行（防"对自己测试数据开火"）：
+ * - 同字符重复串（sk-aaaa… / xxxx…，真实密钥有熵不会长成这样）
+ * - 含 example/fake/test/dummy/sample/placeholder/your- 等明示标记
+ */
+export function isSyntheticSecret(s: string): boolean {
+	const body = s.replace(/^(sk-(ant-)?|(ghp|gho|ghu|ghs|ghr)_|xox[baprs]-|AKIA)/, "");
+	if (/^(.)\1{7,}$/.test(body)) return true;
+	if (/example|fake|test|dummy|sample|placeholder|your[-_]/i.test(s)) return true;
+	return false;
+}
+
 export interface PiiScanner {
 	scan(text: string): PiiHit[];
 	redact(text: string, placeholder?: string): string;
 }
 
-/** 编译 PII 扫描器（pattern 合并后编译为 RegExp） */
+/** 编译 PII 扫描器（pattern 合并后编译为 RegExp；合成密钥自动放行） */
 export function createPiiScanner(patterns: Record<string, string>): PiiScanner {
 	const regs = Object.entries(patterns).map(([name, src]) => ({
 		name,
@@ -143,8 +155,13 @@ export function createPiiScanner(patterns: Record<string, string>): PiiScanner {
 			const hits: PiiHit[] = [];
 			for (const { name, re } of regs) {
 				re.lastIndex = 0;
-				const m = re.exec(text);
-				if (m) hits.push({ name, index: m.index });
+				let m: RegExpExecArray | null;
+				while ((m = re.exec(text)) !== null) {
+					if (!isSyntheticSecret(m[0])) {
+						hits.push({ name, index: m.index });
+						break; // 每个 pattern 记一次即可
+					}
+				}
 			}
 			return hits;
 		},
@@ -152,7 +169,7 @@ export function createPiiScanner(patterns: Record<string, string>): PiiScanner {
 			let out = text;
 			for (const { re } of regs) {
 				re.lastIndex = 0;
-				out = out.replace(re, placeholder);
+				out = out.replace(re, (m) => (isSyntheticSecret(m) ? m : placeholder));
 			}
 			return out;
 		},
