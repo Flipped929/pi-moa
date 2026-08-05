@@ -3,9 +3,9 @@
 ```yaml
 task_card:
   goal: 一句话目标
-  scope: [可写路径列表]          # 写权限边界，多子模型时互不相交
-  context_files: [需读路径]      # 不给全量历史，只给相关文件
-  output: 结果卡要求（≤300字正文，落盘路径）
+  scope: [可写路径列表]          # 写权限边界，多子模型时互不相交；含结果卡路径（文件名须含 actor 名）
+  context_files: [需读路径]      # 不给全量历史，只给相关文件；【必须绝对路径】防跨库误取证
+  output: 结果卡要求（≤300字正文，落盘路径 results/xx-<actor>.md，必填 actor/cwd/status 三行）
   playbook: 编码|评审|调研|写作|默认
   deadline_hint: 预计规模（分钟）
 

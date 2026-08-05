@@ -22,6 +22,8 @@ backup_if_exists() {
 mkdir -p "$PI_DIR/extensions/subagent"
 backup_if_exists "$PI_DIR/extensions/moa-mode.ts"
 cp "$SRC/extensions/moa-mode.ts" "$PI_DIR/extensions/moa-mode.ts"
+backup_if_exists "$PI_DIR/extensions/navigator-watch.ts"
+cp "$SRC/extensions/navigator-watch.ts" "$PI_DIR/extensions/navigator-watch.ts"
 # scope-guard v3 起为目录结构；清理旧版平铺文件（避免双加载）
 rm -f "$PI_DIR/extensions/scope-guard.ts"
 mkdir -p "$PI_DIR/extensions/scope-guard"
@@ -51,9 +53,9 @@ fi
 
 echo ""
 echo "✅ 安装完成。验证步骤："
-echo "   1. 打开 pi，输入 /moa status —— 应看到 4 个角色 ✅"
+echo "   1. 打开 pi，输入 /moa status —— 应看到 5 个角色 ✅"
 echo "   2. /moa on 开启协同模式"
 echo "   3. 跑 examples/demo-review 里的 5 分钟演示（见 README）"
 echo ""
-echo "📌 模型 roster：默认 executor/analyst/critic=deepseek-v4-flash, devil=kimi-coding/k3"
+echo "📌 模型 roster：默认 executor/analyst/critic=deepseek-v4-flash, executor-k3/devil=kimi-coding/k3"
 echo "   改成你持有的模型：编辑 $PI_DIR/agents/*.md 里的 model: 字段"

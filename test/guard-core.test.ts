@@ -5,6 +5,7 @@ import {
 	defaultPolicy,
 	expandHome,
 	extractBashWriteTargets,
+	isMoaBoardWriteAllowed,
 	isOutsideCwd,
 	isProtectedPath,
 	mergePolicy,
@@ -87,6 +88,30 @@ describe("isOutsideCwd", () => {
 	});
 });
 
+describe("isMoaBoardWriteAllowed", () => {
+	it("无 actor 一律拒绝", () => {
+		expect(isMoaBoardWriteAllowed("/work/proj/.pi/moa/t1/results/r1.md", undefined)).toBe(false);
+	});
+	it("黑板外路径不适用（拒绝）", () => {
+		expect(isMoaBoardWriteAllowed("/work/proj/src/out.md", "critic")).toBe(false);
+	});
+	it("文件名含 actor 名单写者放行（忽略大小写）", () => {
+		expect(isMoaBoardWriteAllowed("/work/proj/.pi/moa/t1/results/r1-critic.md", "critic")).toBe(true);
+		expect(isMoaBoardWriteAllowed("/work/proj/.pi/moa/t1/results/R1-CRITIC.md", "critic")).toBe(true);
+	});
+	it("文件名不含 actor 名拒绝（他写者/共享文件）", () => {
+		expect(isMoaBoardWriteAllowed("/work/proj/.pi/moa/t1/results/r1-analyst.md", "critic")).toBe(false);
+		expect(isMoaBoardWriteAllowed("/work/proj/.pi/moa/t1/task.md", "critic")).toBe(false);
+	});
+	it("actor 子串边界：executor 可写 executor-k3 的卡（已知边界，子串匹配）", () => {
+		expect(isMoaBoardWriteAllowed("/work/proj/.pi/moa/t1/results/r1-executor-k3.md", "executor")).toBe(true);
+		expect(isMoaBoardWriteAllowed("/work/proj/.pi/moa/t1/results/r1-executor-k3.md", "executor-k3")).toBe(true);
+	});
+	it("反方向不误放行：executor-k3 不能写 executor 的卡", () => {
+		expect(isMoaBoardWriteAllowed("/work/proj/.pi/moa/t1/results/r1-executor.md", "executor-k3")).toBe(false);
+	});
+});
+
 describe("extractBashWriteTargets", () => {
 	it("> 与 >>", () => {
 		expect(extractBashWriteTargets("echo hi > a.txt")).toEqual(["a.txt"]);
@@ -101,6 +126,12 @@ describe("extractBashWriteTargets", () => {
 	});
 	it("无写入返回空", () => {
 		expect(extractBashWriteTargets("ls -la | grep foo")).toEqual([]);
+	});
+	it("fd 重定向与 /dev/null 不算写入目标（防误伤纯读命令）", () => {
+		expect(extractBashWriteTargets("grep foo bar.txt 2>/dev/null")).toEqual([]);
+		expect(extractBashWriteTargets("cat x 2>>/dev/null")).toEqual([]);
+		expect(extractBashWriteTargets("ls > /dev/null")).toEqual([]);
+		expect(extractBashWriteTargets("echo err > err.log 2>/dev/null")).toEqual(["err.log"]);
 	});
 	it("多目标", () => {
 		const t = extractBashWriteTargets("echo a > x.txt; echo b >> y.txt");

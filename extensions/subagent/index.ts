@@ -336,7 +336,7 @@ async function runSingleAgent(
 				cwd: cwd ?? defaultCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
-				env: { ...process.env, PI_MOA_SUBAGENT: "1" },
+				env: { ...process.env, PI_MOA_SUBAGENT: "1", PI_MOA_AGENT: agentName },
 			});
 			let buffer = "";
 

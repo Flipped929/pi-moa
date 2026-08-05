@@ -2,6 +2,9 @@
 
 ```yaml
 result_card:
+  # 【必填三行·归属与单写者纪律】文件名必须含 actor 名（results/xx-<actor>.md），否则 scope-guard 拦截
+  actor: executor | executor-k3 | analyst | critic | devil
+  cwd: <工作目录绝对路径>          # 治 cwd×3 同构坑，禁止相对路径
   status: done | partial | blocked | handoff
   summary: 结论（≤300字）
   artifacts: [产出文件路径]      # 细节在文件，卡里只有索引

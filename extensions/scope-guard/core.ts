@@ -94,6 +94,19 @@ export function isOutsideCwd(absPath: string, cwd: string): boolean {
 	return abs !== base && !abs.startsWith(base + "/");
 }
 
+/**
+ * pi-moa 任务记录写放行（用户裁决 2026-08-05）：子代理可写 cwd 之外的任务记录路径，但
+ * 文件名必须含自身 actor 名（单写者+归属记录：results/R1-critic.md 只能由 critic 写）。
+ * 共享文件（task.md/final.md/NAVIGATOR.md/COMMIT-LEDGER.md）天然不含 actor 名 → 仅 captain 可写。
+ */
+export function isMoaBoardWriteAllowed(absPath: string, agentName: string | undefined): boolean {
+	if (!agentName) return false;
+	const abs = normalizePath(absPath);
+	if (!abs.includes("/.pi/moa/")) return false;
+	const base = abs.slice(abs.lastIndexOf("/") + 1).toLowerCase();
+	return base.includes(agentName.toLowerCase());
+}
+
 /** 从 bash 命令提取重定向/tee 的写入目标（支持引号包裹的含空格路径） */
 export function extractBashWriteTargets(command: string): string[] {
 	const targets: string[] = [];
@@ -101,8 +114,11 @@ export function extractBashWriteTargets(command: string): string[] {
 		const v = candidates.find((c) => c !== undefined);
 		if (v) targets.push(v);
 	};
-	for (const m of command.matchAll(/>>?\s*(?:"([^"]+)"|'([^']+)'|([^\s"'|;&]+))/g))
-		push(m[1], m[2], m[3]);
+	for (const m of command.matchAll(/(?<!\d)>>?\s*(?:"([^"]+)"|'([^']+)'|([^\s"'|;&]+))/g)) {
+		// fd 重定向（2>/dev/null 等）已被负向后查排除；/dev/null 目标永远无害
+		const v = m[1] ?? m[2] ?? m[3];
+		if (v && v !== "/dev/null") targets.push(v);
+	}
 	for (const m of command.matchAll(/\btee\s+(?:-[a-z]+\s+)*(?:"([^"]+)"|'([^']+)'|([^\s"'|;&]+))/g))
 		push(m[1], m[2], m[3]);
 	return targets;

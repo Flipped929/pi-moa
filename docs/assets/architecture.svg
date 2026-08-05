@@ -35,7 +35,7 @@
 
   <!-- captain -->
   <rect x="290" y="250" width="240" height="86" rx="12" fill="#2b6cb0" filter="url(#shadow)"/>
-  <text x="410" y="278" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">captain · 聚合器①</text>
+  <text x="410" y="278" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">captain · 调度</text>
   <text x="410" y="300" text-anchor="middle" font-size="12" fill="#bee3f8">强模型主会话（K3/Claude/GPT）</text>
   <text x="410" y="320" text-anchor="middle" font-size="12" fill="#bee3f8">拆片派活 · 抽查裁决 · 难片亲执 ≤40%</text>
 
@@ -43,51 +43,57 @@
   <line x1="560" y1="144" x2="480" y2="248" stroke="#4a5568" stroke-width="2" marker-end="url(#arrow)"/>
   <text x="478" y="200" font-size="12" fill="#4a5568">对话</text>
 
-  <!-- 四个角色 -->
+  <!-- 五个角色 -->
   <!-- executor -->
-  <rect x="70" y="390" width="160" height="76" rx="10" fill="#38a169" filter="url(#shadow)"/>
-  <text x="150" y="416" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">executor</text>
-  <text x="150" y="436" text-anchor="middle" font-size="11" fill="#c6f6d5">便宜模型 · 限定域可写</text>
-  <text x="150" y="452" text-anchor="middle" font-size="11" fill="#c6f6d5">真实执行切片</text>
+  <rect x="70" y="390" width="128" height="76" rx="10" fill="#38a169" filter="url(#shadow)"/>
+  <text x="134" y="414" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">executor</text>
+  <text x="134" y="432" text-anchor="middle" font-size="10.5" fill="#c6f6d5">便宜模型 · 限定域可写</text>
+  <text x="134" y="448" text-anchor="middle" font-size="10.5" fill="#c6f6d5">真实执行切片</text>
+  <!-- executor-k3 -->
+  <rect x="210" y="390" width="128" height="76" rx="10" fill="#319795" filter="url(#shadow)"/>
+  <text x="274" y="414" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">executor-k3</text>
+  <text x="274" y="432" text-anchor="middle" font-size="10.5" fill="#b2f5ea">强模型档 · 设计型/难片</text>
+  <text x="274" y="448" text-anchor="middle" font-size="10.5" fill="#b2f5ea">限定域可写</text>
   <!-- analyst -->
-  <rect x="250" y="390" width="160" height="76" rx="10" fill="#38a169" filter="url(#shadow)"/>
-  <text x="330" y="416" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">analyst</text>
-  <text x="330" y="436" text-anchor="middle" font-size="11" fill="#c6f6d5">便宜模型 · 只读</text>
-  <text x="330" y="452" text-anchor="middle" font-size="11" fill="#c6f6d5">分析（实证纪律）</text>
+  <rect x="350" y="390" width="128" height="76" rx="10" fill="#38a169" filter="url(#shadow)"/>
+  <text x="414" y="414" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">analyst</text>
+  <text x="414" y="432" text-anchor="middle" font-size="10.5" fill="#c6f6d5">便宜模型 · 业务只读</text>
+  <text x="414" y="448" text-anchor="middle" font-size="10.5" fill="#c6f6d5">结果卡自写</text>
   <!-- critic -->
-  <rect x="430" y="390" width="160" height="76" rx="10" fill="#38a169" filter="url(#shadow)"/>
-  <text x="510" y="416" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">critic</text>
-  <text x="510" y="436" text-anchor="middle" font-size="11" fill="#c6f6d5">便宜模型 · 只读</text>
-  <text x="510" y="452" text-anchor="middle" font-size="11" fill="#c6f6d5">对抗审查找错</text>
+  <rect x="490" y="390" width="128" height="76" rx="10" fill="#38a169" filter="url(#shadow)"/>
+  <text x="554" y="414" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">critic</text>
+  <text x="554" y="432" text-anchor="middle" font-size="10.5" fill="#c6f6d5">便宜模型 · 业务只读</text>
+  <text x="554" y="448" text-anchor="middle" font-size="10.5" fill="#c6f6d5">结果卡自写</text>
   <!-- devil -->
-  <rect x="610" y="390" width="150" height="76" rx="10" fill="#6b46c1" filter="url(#shadow)"/>
-  <text x="685" y="416" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">devil</text>
-  <text x="685" y="436" text-anchor="middle" font-size="11" fill="#e9d8fd">跨家族模型 · 只读</text>
-  <text x="685" y="452" text-anchor="middle" font-size="11" fill="#e9d8fd">异构魔鬼代言人</text>
+  <rect x="630" y="390" width="128" height="76" rx="10" fill="#6b46c1" filter="url(#shadow)"/>
+  <text x="694" y="414" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">devil</text>
+  <text x="694" y="432" text-anchor="middle" font-size="10.5" fill="#e9d8fd">跨家族模型 · 只读*</text>
+  <text x="694" y="448" text-anchor="middle" font-size="10.5" fill="#e9d8fd">异构魔鬼代言人</text>
 
   <!-- captain → roles（任务卡） -->
-  <line x1="330" y1="336" x2="170" y2="388" stroke="#2f855a" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)"/>
-  <line x1="380" y1="336" x2="335" y2="388" stroke="#2f855a" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)"/>
-  <line x1="440" y1="336" x2="500" y2="388" stroke="#2f855a" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)"/>
-  <line x1="490" y1="336" x2="668" y2="388" stroke="#2f855a" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)"/>
+  <line x1="330" y1="336" x2="140" y2="388" stroke="#2f855a" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)"/>
+  <line x1="380" y1="336" x2="278" y2="388" stroke="#2f855a" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)"/>
+  <line x1="440" y1="336" x2="418" y2="388" stroke="#2f855a" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)"/>
+  <line x1="470" y1="336" x2="556" y2="388" stroke="#2f855a" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)"/>
+  <line x1="490" y1="336" x2="688" y2="388" stroke="#2f855a" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowGreen)"/>
   <text x="238" y="352" font-size="11" fill="#2f855a">任务卡（scope 互不相交）</text>
 
   <!-- roles → captain（结果卡/handoff） -->
-  <line x1="150" y1="466" x2="330" y2="352" stroke="#c05621" stroke-width="1.6" stroke-dasharray="2,3" marker-end="url(#arrowOrange)"/>
-  <line x1="685" y1="466" x2="492" y2="352" stroke="#c05621" stroke-width="1.6" stroke-dasharray="2,3" marker-end="url(#arrowOrange)"/>
+  <line x1="134" y1="466" x2="330" y2="352" stroke="#c05621" stroke-width="1.6" stroke-dasharray="2,3" marker-end="url(#arrowOrange)"/>
+  <line x1="694" y1="466" x2="492" y2="352" stroke="#c05621" stroke-width="1.6" stroke-dasharray="2,3" marker-end="url(#arrowOrange)"/>
   <text x="560" y="480" font-size="11" fill="#c05621">结果卡 ≤300字 / handoff 包（含 dead_ends）</text>
 
   <!-- scope-guard 护盾 -->
-  <rect x="70" y="500" width="520" height="58" rx="10" fill="#fff5f5" stroke="#fc8181" stroke-width="1.6"/>
+  <rect x="70" y="500" width="690" height="58" rx="10" fill="#fff5f5" stroke="#fc8181" stroke-width="1.6"/>
   <text x="88" y="524" font-size="13" font-weight="700" fill="#c53030">🛡️ scope-guard 硬边界（物理拦截，非 prompt 自觉）</text>
-  <text x="88" y="544" font-size="11" fill="#742a2a">敏感路径禁写 · 子代理 cwd 禁写（含 bash 绕行拦截）· 出网 PII redact · 预算告警</text>
+  <text x="88" y="544" font-size="11" fill="#742a2a">敏感路径禁写 · 子代理 cwd 禁写（含 bash 绕行）· 任务记录结果卡放行（文件名含 actor 名=单写者+归属）· PII redact</text>
 
-  <!-- 黑板 -->
+  <!-- 任务记录 -->
   <rect x="70" y="586" width="690" height="70" rx="10" fill="#2d3748" filter="url(#shadow)"/>
-  <text x="90" y="614" font-size="14" font-weight="700" fill="#faf089">📋 黑板 .pi/moa/&lt;task&gt;/</text>
+  <text x="90" y="614" font-size="14" font-weight="700" fill="#faf089">📋 任务记录 .pi/moa/&lt;task&gt;/</text>
   <text x="90" y="636" font-size="11.5" fill="#e2e8f0">任务卡 · 结果卡 · handoff 包 · 运行记录（session/run/actor/读写范围/tokens_by_model）全程落盘</text>
 
-  <!-- captain→黑板 -->
+  <!-- captain→任务记录 -->
   <line x1="410" y1="336" x2="410" y2="584" stroke="#4a5568" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrow)"/>
 
   <!-- ═══ 治理面容器 ═══ -->
@@ -97,7 +103,7 @@
 
   <!-- Navigator -->
   <rect x="850" y="250" width="270" height="120" rx="12" fill="#6b46c1" filter="url(#shadow)"/>
-  <text x="985" y="278" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">Navigator · 聚合器②</text>
+  <text x="985" y="278" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">Navigator · 监测审计</text>
   <text x="985" y="300" text-anchor="middle" font-size="12" fill="#e9d8fd">独立上下文强模型</text>
   <text x="985" y="322" text-anchor="middle" font-size="12" fill="#e9d8fd">运行监测 · 审计 · 成本基线对比</text>
   <text x="985" y="344" text-anchor="middle" font-size="12" fill="#e9d8fd">角色可信度 · 调度适配 · 优化建议</text>
@@ -112,9 +118,15 @@
   <text x="868" y="538" font-size="11.5" fill="#4a5568">· 三卡协议遵循率 / 门禁违规</text>
   <text x="868" y="564" font-size="11.5" fill="#6b46c1" font-weight="600">产出：待审 Writeback（不直写正式库）</text>
 
-  <!-- 黑板 → Navigator -->
-  <line x1="762" y1="621" x2="940" y2="582" stroke="#6b46c1" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#arrowPurple)"/>
-  <text x="786" y="640" font-size="11" fill="#6b46c1">读取运行记录（异步）</text>
+  <!-- navigator-watch 强制锚点 -->
+  <rect x="850" y="592" width="270" height="64" rx="10" fill="#ffffff" stroke="#d6bcfa" stroke-width="1.4"/>
+  <text x="868" y="614" font-size="12" font-weight="700" fill="#553c9a">🧭 navigator-watch 纪律强制钩子</text>
+  <text x="868" y="632" font-size="10.5" fill="#4a5568">派活/commit 前必落任务卡（可 block）</text>
+  <text x="868" y="648" font-size="10.5" fill="#4a5568">turn_end 对账 + status 校验（提醒档）</text>
+
+  <!-- 任务记录 → Navigator（肘形绕开 navigator-watch 框） -->
+  <path d="M762,618 L830,585 L918,585" stroke="#6b46c1" stroke-width="2" stroke-dasharray="6,3" fill="none" marker-end="url(#arrowPurple)"/>
+  <text x="770" y="606" font-size="11" fill="#6b46c1">异步读取</text>
 
   <!-- Navigator → 用户（升级）：先上后左，避开标题区 -->
   <path d="M985,248 L985,150 L706,128" stroke="#6b46c1" stroke-width="2" stroke-dasharray="6,3" fill="none" marker-end="url(#arrowPurple)"/>
@@ -123,5 +135,5 @@
   <!-- 底部图例 -->
   <rect x="40" y="706" width="1120" height="54" rx="10" fill="#edf2f7"/>
   <text x="64" y="728" font-size="12" font-weight="700" fill="#2d3748">核心机制：</text>
-  <text x="64" y="748" font-size="11.5" fill="#4a5568">调度矩阵（任务类型→子模型数） · 抽查机制（10-30% 风险导向复核） · 实证纪律（提交说明≠实证） · 一读多评（防重叠税） · handoff 死路清单 · 多模态任务视觉步骤归 captain</text>
+  <text x="64" y="748" font-size="11.5" fill="#4a5568">调度矩阵（任务类型→子模型数） · 抽查复核 10-30% · 实证纪律（提交说明≠实证） · 一读多评防重叠税 · handoff 死路清单 · 结果卡单写者（文件名含 actor） · /moa status 三层实况</text>
 </svg>

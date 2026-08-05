@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1] - 2026-08-05（发布整理）
+- moa-mode v1.3：/moa review 架构化——多模型多角色多 agent 多轮联合评审至零可执行（Round 1 并行开火 → Round 2 交叉质询 → Round 3 裁决收敛，弹性轮次）；skills 感知（开场 find-skills 检索并明示采用/不采用清单）
+- moa-mode v1.4：/moa status 三层排版——【captain·调度】（主会话 token/成本）/【Navigator·监测审计】（navigator-watch 对账状态）/【子模型】（在跑进程 + 已完成任务与时长，按模型聚合）
+- navigator-watch v1.1：任务记录纪律结构性强制（Navigator 实体落地）——派活（subagent）/ git commit·push 前须已落盘任务卡否则 block；turn_end 每 5 轮对账（COMMIT-LEDGER 漏记 commit + 结果卡缺 status 字段，提醒档）+ 自动重跑 navigator-report.py；/navigator on|off|status|scan 命令；状态落盘 .navigator-state.json 供 /moa status 读取
+- 写权限机制：任务记录结果卡单写者——子代理写 .pi/moa 内路径须文件名含自身 actor 名（isMoaBoardWriteAllowed，PI_MOA_AGENT 注入）；共享文件（task.md/final.md/NAVIGATOR.md/COMMIT-LEDGER.md）仅 captain 可写
+- 新角色 executor-k3：K3 高能力档执行者（主领设计型/高难度分片），与 deepseek executor 双档并存
+- 术语：黑板 → 任务记录（.pi/moa/<任务名>/）
+- scope-guard core 单测新增 isMoaBoardWriteAllowed 覆盖（39 → 45 项）
+
 ## [0.1.0] - 2026-08-05
 首个公开版本。
 - 双平面架构：captain 执行面（主会话）+ Navigator 治理面（异步审计）

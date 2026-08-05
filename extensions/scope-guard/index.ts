@@ -14,6 +14,7 @@ import {
 	createPiiScanner,
 	defaultPolicy,
 	extractBashWriteTargets,
+	isMoaBoardWriteAllowed,
 	isOutsideCwd,
 	isProtectedPath,
 	mergePolicy,
@@ -50,8 +51,12 @@ export default function (pi: ExtensionAPI) {
 				return { block: true, reason: `scope-guard: "${abs}" 是受保护路径（凭证/密钥/仓库内部）。${NO_RETRY}` };
 			}
 			if (isSub && policy.subagent.restrictToCwd && isOutsideCwd(abs, cwd)) {
+				// pi-moa 黑板放行：仅当文件名含自身 actor 名（单写者+归属），其余越界写入照拦
+				if (isMoaBoardWriteAllowed(abs, process.env.PI_MOA_AGENT)) {
+					return undefined;
+				}
 				ctx.hasUI && ctx.ui.notify(`🛡️ scope-guard 拦截越界写入: ${abs}`, "warning");
-				return { block: true, reason: `scope-guard: 子代理禁止写工作目录之外的路径 "${abs}"。${NO_RETRY}` };
+				return { block: true, reason: `scope-guard: 子代理禁止写工作目录之外的路径 "${abs}"（黑板结果卡例外：文件名须含你的角色名，如 results/xx-${process.env.PI_MOA_AGENT ?? "<actor>"}.md）。${NO_RETRY}` };
 			}
 			return undefined;
 		}

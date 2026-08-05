@@ -4,9 +4,9 @@ set -euo pipefail
 PI_DIR="${PI_AGENT_DIR:-$HOME/.pi/agent}"
 
 echo "🐙 pi-moa uninstaller"
-rm -f "$PI_DIR/extensions/moa-mode.ts" "$PI_DIR/extensions/scope-guard.ts"
+rm -f "$PI_DIR/extensions/moa-mode.ts" "$PI_DIR/extensions/scope-guard.ts" "$PI_DIR/extensions/navigator-watch.ts"
 rm -rf "$PI_DIR/extensions/scope-guard"
 rm -rf "$PI_DIR/extensions/subagent"
-for a in executor analyst critic devil; do rm -f "$PI_DIR/agents/$a.md"; done
+for a in executor executor-k3 analyst critic devil; do rm -f "$PI_DIR/agents/$a.md"; done
 echo "✅ 已移除扩展与角色文件"
-echo "ℹ️  保留：$PI_DIR/moa/（策略与模板）、各项目 .pi/moa/（黑板记录）——如需清理请手动删除"
+echo "ℹ️  保留：$PI_DIR/moa/（策略与模板）、各项目 .pi/moa/（任务记录）——如需清理请手动删除"

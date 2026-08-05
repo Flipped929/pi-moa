@@ -60,10 +60,12 @@ PI_AGENT_DIR=$HOME/.config/my-pi-agent ./install.sh
 | 移除 | 保留 |
 |---|---|
 | `extensions/moa-mode.ts`、`extensions/scope-guard.ts`（旧平铺） | `$PI_DIR/moa/`（guard-policy.json 策略 + templates 模板） |
-| `extensions/scope-guard/`、`extensions/subagent/` | 各项目 `.pi/moa/` 黑板记录 |
+| `extensions/scope-guard/`、`extensions/subagent/` | 各项目 `.pi/moa/` 任务记录中记录 |
 | `agents/{executor,analyst,critic,devil}.md` | `*.bak-*` 备份文件 |
 
-卸载**有意保留**策略、模板与黑板数据（审计留痕），需彻底清理请手动删除。
+卸载**有意保留**策略、模板与任务记录数据（审计留痕），需彻底清理请手动删除。
+
+> 注意：uninstall.sh 的角色删除列表目前为 `{executor,analyst,critic,devil}`，暂未包含新增的 `executor-k3`；卸载后需手动删除 `$PI_DIR/agents/executor-k3.md`（待上游同步）。
 
 ---
 
@@ -75,6 +77,7 @@ PI_AGENT_DIR=$HOME/.config/my-pi-agent ./install.sh
 |---|---|---|---|
 | captain | *（pi 主会话本身，无 agent 文件）* | 主会话当前模型（示例环境为 kimi-k3） | 调度 / 裁决 / 最难切片，≤40% 工作量 |
 | executor | `agents/executor.md` | `deepseek/deepseek-v4-flash` | 真实执行切片，限定域可写 |
+| executor-k3 | `agents/executor-k3.md` | `kimi-coding/k3` | K3 高能力执行档，主领设计型/高难度分片 |
 | analyst | `agents/analyst.md` | `deepseek/deepseek-v4-flash` | 只读分析，实证纪律 |
 | critic | `agents/critic.md` | `deepseek/deepseek-v4-flash` | 对抗审查，挑错为唯一目标 |
 | devil | `agents/devil.md` | `kimi-coding/k3` | 跨家族异构魔鬼代言人，可看图片 |
@@ -249,10 +252,21 @@ model: ollama/qwen2.5-coder-14b
 | 防线 | 事件 | 触发条件 | 动作 |
 |---|---|---|---|
 | 1 | `tool_call`（write/edit） | 目标路径受保护 | block + 告警 |
-| 2a | `tool_call`（write/edit） | 子代理 + `restrictToCwd` + 越界 | block + 告警 |
+| 2a | `tool_call`（write/edit） | 子代理 + `restrictToCwd` + 越界 | block + 告警（任务记录结果卡例外：`isMoaBoardWriteAllowed` 放行，见 3.9） |
 | 2b | `tool_call`（bash） | 子代理 + `blockBashWritesOutsideCwd` + 写入目标越界/受保护 | block + 告警 |
 | 3 | `before_provider_request` | `pii.enabled` + payload 命中 pattern | redact 或 warn |
 | 预算 | `message_end` | `sessionTokenWarnAt > 0` 且累计达标 | 一次性告警 |
+
+### 3.9 任务记录写放行（isMoaBoardWriteAllowed，硬编码，非 guard-policy 字段）
+
+> 用户裁决 2026-08-05：子代理可写 cwd 之外的任务记录路径（防线 2a write/edit 的例外；**bash 写入不放行**——强制走 write/edit 留痕路径），但**文件名必须含自身 actor 名**——单写者 + 归属记录。
+
+- 实现：`extensions/scope-guard/core.ts` 的 `isMoaBoardWriteAllowed(absPath, agentName)`，纯函数可单测；`index.ts` 在防线 2 拦截前调用：`isMoaBoardWriteAllowed(abs, process.env.PI_MOA_AGENT)`。
+- 规则：路径包含 `/.pi/moa/` **且**文件名（basename，忽略大小写）包含 `agentName` → 放行；否则按防线 2 正常拦截。
+- `agentName` 来源：subagent 工具 spawn 子进程时注入的环境变量 `PI_MOA_AGENT`（`extensions/subagent/index.ts`），值等于对应 `agents/*.md` 的 `name`（如 `critic`）。
+- 结果：结果卡文件名必须形如 `results/xx-<actor>.md`（如 `R1-critic.md`）。共享文件 `task.md` / `final.md` / `NAVIGATOR.md` / `COMMIT-LEDGER.md` 天然不含 actor 名 → 子代理不可写，仅 captain（主会话，不受子代理限制）可写。
+- 已知边界：子串匹配——`executor` 也能写 `r1-executor-k3.md`（`executor` 是 `executor-k3` 的子串），反向则不行。如需精确到角色全名，待上游收紧为边界匹配。
+- 不可配置：此规则不读 guard-policy.json，属 core 硬编码；改行为需改源码。
 
 ---
 
@@ -262,10 +276,10 @@ model: ollama/qwen2.5-coder-14b
 
 | 命令 | 行为 |
 |---|---|
-| `/moa on` | 开启协同模式；主会话中自动确保黑板目录并登记 `.gitignore`；通知角色 roster 状态 |
+| `/moa on` | 开启协同模式；主会话中自动确保任务记录目录并登记 `.gitignore`；通知角色 roster 状态 |
 | `/moa off` | 关闭协同，回到单模型模式（注入的调度规则在下一个主会话系统提示中移除） |
-| `/moa status` | 显示开关状态、4 角色在线检查（✅/❌）、黑板任务数；子代理进程中黑板显示 `n/a` |
-| `/moa review <主题>` | 评审模式快捷方式：自动开启协同 → 建黑板 → 注入多角色多轮联合评审 prompt（主题为空则提示用法） |
+| `/moa status` | 显示开关状态、4 角色在线检查（✅/❌）、任务记录任务数；子代理进程中任务记录显示 `n/a` |
+| `/moa review <主题>` | 评审模式快捷方式：自动开启协同 → 建任务记录 → 注入多角色多轮联合评审 prompt（主题为空则提示用法） |
 | `/moa`（无参数或未知子命令） | 打印用法提示 |
 
 ### 4.2 快捷别名
@@ -282,27 +296,28 @@ model: ollama/qwen2.5-coder-14b
 | 变量 | 取值 | 作用 |
 |---|---|---|
 | `PI_MOA_DEFAULT` | `"1"` | 启动即开启协同模式（`state.enabled = process.env.PI_MOA_DEFAULT === "1"`），测试/脚本用 |
-| `PI_MOA_SUBAGENT` | `"1"` | **由 subagent 工具自动注入子进程**（`extensions/subagent/index.ts` spawn 时设置）。子代理进程据此：跳过调度规则注入（防套娃）、`/moa status` 黑板显示 `n/a`、`/moa on` 不写 `.gitignore` |
+| `PI_MOA_SUBAGENT` | `"1"` | **由 subagent 工具自动注入子进程**（`extensions/subagent/index.ts` spawn 时设置）。子代理进程据此：跳过调度规则注入（防套娃）、`/moa status` 任务记录显示 `n/a`、`/moa on` 不写 `.gitignore` |
+| `PI_MOA_AGENT` | 角色名 | **由 subagent 工具自动注入子进程**（值 = agent 文件 `name`）。scope-guard 用它做任务记录写放行判定（§3.9）；`/moa status` 用它显示在跑子代理的角色 |
 
 ### 4.4 调度规则注入机制
 
 - `pi.on("before_agent_start")`：`enabled` 且**非子代理**时，把 `ORCHESTRATION_RULES` 追加到系统提示。
 - 防重复注入：系统提示已含 `[pi-moa 协同模式已开启` 标记则跳过。
 - `session_start`：开启状态下主会话状态栏显示 `🐙 moa`。
-- 注入内容要点：<10 分钟小任务不派活；调度矩阵（高重叠阅读 0-1 个 / 编码 2-3 并行 / 评审满编 3 / 调研 2-3 / 写作 1+1）；并行 ≤3；captain ≤40% 工作量；任务卡五要素；黑板落盘约定；抽查 10-30% 与信任降级。
+- 注入内容要点：<10 分钟小任务不派活；调度矩阵（高重叠阅读 0-1 个 / 编码 2-3 并行 / 评审满编 3 / 调研 2-3 / 写作 1+1）；并行 ≤3；captain ≤40% 工作量；任务卡五要素；任务记录落盘约定；抽查 10-30% 与信任降级。
 
 ---
 
-## 5. 黑板目录结构
+## 5. 任务记录目录结构
 
 ### 5.1 目录树
 
 ```
-<项目根>/.pi/moa/               ← 黑板根（自动创建）
+<项目根>/.pi/moa/               ← 任务记录根（自动创建）
 ├── <任务名>/                   ← 每个任务一个目录
 │   ├── task.md                 ← 任务卡（goal/scope/context_files/output/… + run_unit 记录）
-│   ├── results/                ← 子模型结果卡（每角色一个 .md）
-│   │   └── <role>.md
+│   ├── results/                ← 子模型结果卡（每角色一个 .md，文件名含 actor 名单写者）
+│   │   └── xx-<actor>.md        （如 R1-critic.md，见 §3.9）
 │   └── handoffs/               ← handoff 包（status=handoff 时追加）
 │       └── <role>.md
 ├── review-<日期>/              ← /moa review 专用
@@ -315,9 +330,9 @@ model: ollama/qwen2.5-coder-14b
 | 文件 | 来源 → 去向 | 内容 |
 |---|---|---|
 | `task.md` | captain → 子模型 | 模板 `moa/templates/task-card.md`：`task_card.goal/scope/context_files/output/playbook/deadline_hint` + `run_unit` 运行单元记录 |
-| `results/*.md` | 子模型 → captain | 模板 `moa/templates/result-card.md`：`result_card.status/summary/artifacts/concerns`（≤300 字正文） |
+| `results/*.md` | 子模型 → captain | 模板 `moa/templates/result-card.md`：`result_card.status/summary/artifacts/concerns`（≤300 字正文）。文件名须含 actor 名单写者（`xx-<actor>.md`，§3.9），否则 scope-guard 拦截 |
 | `handoffs/*.md` | 子模型 → captain | `status=handoff` 时追加：`handoff_packet.suggest_next/what_done/current_state/dead_ends/open_question/artifacts`（dead_ends 死路清单最值钱）+ `usage.tokens_by_model/cost_actual` |
-| 各文件头部 run_unit | 黑板留痕 | `session_id / run_id / actor（角色@模型）/ workspace_scope / sandbox_profile / risk_level(G0-G3) / approval_ref / tokens_by_model / cost_actual / cost_single_model_baseline` |
+| 各文件头部 run_unit | 任务记录留痕 | `session_id / run_id / actor（角色@模型）/ workspace_scope / sandbox_profile / risk_level(G0-G3) / approval_ref / tokens_by_model / cost_actual / cost_single_model_baseline` |
 
 `cost_single_model_baseline`：同任务全部用 captain 模型（如 K3）估算的成本，供 Navigator 做多模型 vs 单模型成本对比。
 
@@ -326,9 +341,9 @@ model: ollama/qwen2.5-coder-14b
 - 触发点：`/moa on` 与 `/moa review`（主会话进程，子代理跳过）。
 - 条件：项目根存在 `.git` 目录。
 - 动作：读取项目 `.gitignore`，若没有精确行 `.pi/moa/` 则追加（文件末尾无换行时先补 `\n`），并提示 `.gitignore 已登记 .pi/moa/`。
-- 目的：黑板留痕不进版本库（G1 留痕：仅工作区内小动作）。
-- 非 git 项目：不写 .gitignore，黑板照常创建。
-- 卸载不删黑板；想清空记录直接删除对应 `.pi/moa/<任务名>/` 目录。
+- 目的：任务记录留痕不进版本库（G1 留痕：仅工作区内小动作）。
+- 非 git 项目：不写 .gitignore，任务记录照常创建。
+- 卸载不删任务记录；想清空记录直接删除对应 `.pi/moa/<任务名>/` 目录。
 
 ---
 
@@ -367,7 +382,7 @@ model: ollama/qwen2.5-coder-14b
 - frontmatter 的 `model` 字段可选；缺失/拼写错误的 model 会被 pi 忽略而落到默认模型。核对 `provider/model-id` 格式与可用性。
 - 同一 agent 名在项目级覆盖用户级时，模型也随项目级文件走。
 
-**F8. 黑板没建 / .gitignore 没登记**
+**F8. 任务记录没建 / .gitignore 没登记**
 - `ensureBlackboard` 只在 `/moa on` 和 `/moa review` 时执行，且子代理进程跳过——如果通过 `PI_MOA_DEFAULT=1` 自动开启，首次任务前先手动 `/moa on` 一次。
 - `.gitignore` 登记仅限 git 仓库（存在 `.git`）；非 git 项目只建目录不写 ignore。
 
@@ -379,4 +394,4 @@ model: ollama/qwen2.5-coder-14b
 - 若存在旧版平铺 `~/.pi/agent/extensions/scope-guard.ts` 且目录版并存，会双注册钩子、双份拦截提示。install.sh 会自动删除平铺版；手动安装/升级过的话自查 `ls ~/.pi/agent/extensions/`。
 
 **F11. 卸载后还有残留**
-- uninstall.sh 有意保留 `moa/`（策略+模板）与各项目黑板。彻底清理：`rm -rf ~/.pi/agent/moa <项目>/.pi/moa`，备份文件 `*.bak-*` 一并删除。
+- uninstall.sh 有意保留 `moa/`（策略+模板）与各项目任务记录。彻底清理：`rm -rf ~/.pi/agent/moa <项目>/.pi/moa`，备份文件 `*.bak-*` 一并删除。
