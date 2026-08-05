@@ -92,10 +92,12 @@ function parseSessionStats(file: string): {
 	captain: { input: number; output: number; cost: number };
 	byModel: Map<string, ModelAgg>;
 	recent: { agent: string; model: string; task: string; dur: number | null }[];
+	lastAt: number;
 } {
 	const captain = { input: 0, output: 0, cost: 0 };
 	const byModel = new Map<string, ModelAgg>();
 	const recent: { agent: string; model: string; task: string; dur: number | null }[] = [];
+	let lastAt = 0; // 最近一次子模型任务完成时间（ms）
 	const callTs = new Map<string, { ts: number; task: string }>();
 	try {
 		for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
@@ -116,6 +118,7 @@ function parseSessionStats(file: string): {
 					}
 				}
 			} else if (m.role === "toolResult" && m.toolName === "subagent" && m.details?.results) {
+				if (o.timestamp) lastAt = Math.max(lastAt, Date.parse(o.timestamp));
 				const call = callTs.get(m.toolCallId);
 				const dur = call && o.timestamp ? Date.parse(o.timestamp) - call.ts : null;
 				for (const r of m.details.results) {
@@ -132,7 +135,7 @@ function parseSessionStats(file: string): {
 			}
 		}
 	} catch { /* 会话文件读取失败容忍 */ }
-	return { captain, byModel, recent: recent.slice(-5) };
+	return { captain, byModel, recent: recent.slice(-5), lastAt };
 }
 
 /** Navigator 状态：navigator-watch 落盘的状态文件（可能不存在） */
@@ -301,7 +304,9 @@ export default function (pi: ExtensionAPI) {
 						crew.push(`  ✓ ${r.agent} @${r.model}${r.dur != null ? ` ${fmtDur(r.dur)}` : ""} · ${r.task}`);
 				}
 				}
-				L.push(`【子模型】${crew.length ? "" : "空闲"}`);
+				// 当前状态行（用户要求）：在跑=实时进程；空闲=最近完成于多久前
+				const lastAgo = stats?.lastAt ? `${fmtDur(Date.now() - stats.lastAt)}前` : null;
+				L.push(`【子模型】当前：${running.length ? `▶ 在跑 ${running.length} 个` : lastAgo ? `空闲（最近完成 ${lastAgo}）` : "空闲（本会话未派活）"}`);
 				L.push(...crew);
 				L.push(`角色：${agentRoster()}`);
 				ctx.ui.notify(L.join("\n"), "info");
