@@ -40,9 +40,13 @@ function summarizeTask(raw: string): string {
 	if (bracket) return bracket[1];
 	const paren = t.match(/执行（([^（）]{4,40}?)）/);
 	if (paren) return paren[1];
-	t = t.replace(/^先读任务卡\s+\S+\s*(并|，)?\s*/, "");
-	t = t.replace(/\/[^\s]*\.md/g, "").trim();
-	return t.slice(0, 36) || "（无描述）";
+	// 兑底：剥“先读任务卡 <path>”前缀；删整段路径 token；再取第一个有意义的动词短语
+	t = t.replace(/^先读任务卡\s+\S+\s*(和|与|并|，|、)?\s*/, "");
+	t = t.replace(/\S*\/[^\s，。；、]*/g, "").replace(/\s+/g, " ").trim();
+	// 去掉开头残留的连词/标点（“和 ，按卡修复”类）
+	t = t.replace(/^[和与并以及，、。\.\s]+/, "");
+	const m = t.match(/(严格按卡)?(.{4,36}?)(。|；|;|结果卡|不 commit|$)/);
+	return (m?.[2] ?? t).trim().slice(0, 36) || "（无描述）";
 }
 
 /** 在跑子代理：ps 扫描 pi --mode json 进程（PI_MOA_AGENT 由 subagent 扩展注入 env） */
