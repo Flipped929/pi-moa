@@ -23,7 +23,12 @@
 - docs/README.en.md：英文 README
 - 文档由 3 executor 并行起草 + captain 抽查复核（实证机制应用于自身）
 
+## [0.4.0] - 2026-08-05（M4 CI/CD 与社区）
+- GitHub Actions：单测 + core.ts≥80% 覆盖门禁 + e2e mock 冒烟 + gitleaks + 个人信息 hygiene 扫描
+- CONTRIBUTING / CODE_OF_CONDUCT / SECURITY（含绕过案例征集与已知边界声明）
+- issue/PR 模板
+
 ## 路线图
-- 0.4: GitHub Actions CI（lint+test+gitleaks+release）+ 社区文件 + pi packages 分发
+- 0.5: pi packages 原生分发（pi install）+ GitHub Release 自动化
 - 0.3: docs 完整版（EN README / playbooks 编写指南）+ pi packages 原生分发
 - 0.4: Navigator 治理面落地（/moa audit + 成本基线报告）

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npx vitest run
+
+      - name: Coverage (core.ts must stay >= 80%)
+        run: |
+          npx vitest run --coverage 2>&1 | tee coverage.txt
+          CORE=$(grep "core.ts" coverage.txt | awk '{print $2}' | tr -d '%' | cut -d. -f1)
+          echo "core.ts stmts coverage: ${CORE}%"
+          [ "$CORE" -ge 80 ] || { echo "❌ core.ts coverage below 80%"; exit 1; }
+
+      - name: e2e smoke (mock provider)
+        run: bash scripts/e2e-smoke.sh
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_SUMMARY: "true"
+
+      - name: Personal-info / path hygiene scan
+        run: |
+          ! grep -rniE "/Users/[a-z]+/|MLK-V2|huiyan" \
+            --include="*.ts" --include="*.md" --include="*.json" --include="*.sh" \
+            . | grep -v node_modules || { echo "❌ personal info detected"; exit 1; }
+          echo "✅ hygiene scan passed"
