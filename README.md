@@ -39,9 +39,11 @@ captain（强模型, pi 主会话）── 拆片/派活/抽查/裁决
 git clone https://github.com/<you>/pi-moa.git && cd pi-moa
 ./install.sh                      # 幂等，自动备份
 pi                                # 打开 pi
-/moa status                       # 应看到 4 个角色 ✅
-/moa on                           # 开启协同模式
+/moa-on                           # 开启协同模式（快捷命令）
+/moa-status                       # 查看状态：4 个角色应为 ✅
 ```
+
+命令一览：`/moa on|off|status|review <主题>`，或快捷别名 `/moa-on` `/moa-off` `/moa-status` `/moa-review <主题>`。
 
 然后把 `examples/demo-review/c.py` 放进一个测试目录，对 pi 说：
 
