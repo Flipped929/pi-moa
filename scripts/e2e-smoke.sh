@@ -4,6 +4,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+REPO_ROOT="$PWD"
 WORK=$(mktemp -d /tmp/pi-moa-e2e.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -61,6 +62,7 @@ else
   exit 1
 fi
 
-# 5. 单测全量
+# 5. 单测全量（回仓库根跑）
+cd "$REPO_ROOT"
 npx vitest run --reporter=dot 2>&1 | tail -2
 echo "✅ e2e smoke 完成"
