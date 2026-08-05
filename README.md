@@ -4,7 +4,7 @@
 
 让 pi 变成一个"教练兼队员"的多模型系统：强模型（如 Kimi K3 / Claude / GPT）做调度、裁决与最难的切片；便宜模型（DeepSeek / Haiku 等）并行承包分析与执行；所有通讯走"任务卡 / 结果卡 / handoff 包"三卡协议，全程可审计。
 
-[English](docs/README.en.md)（WIP） · [架构](docs/architecture.md) · [配置](docs/configuration.md) · [模式（playbooks）](docs/playbooks.md)
+[English](docs/README.en.md) · [架构](docs/architecture.md) · [配置](docs/configuration.md) · [模式（playbooks）](docs/playbooks.md)
 
 ## 为什么
 

@@ -16,7 +16,14 @@
 - install.sh 适配目录化安装（自动清理旧版平铺 scope-guard.ts 防双加载）
 - /moa-on /moa-off /moa-status /moa-review 快捷命令
 
+## [0.3.0] - 2026-08-05（M3 文档完整版）
+- docs/architecture.md：双平面/三卡协议/调度矩阵/安全模型/8+ 设计决策记录
+- docs/configuration.md：install/roster/guard-policy 全字段参考/命令表/FAQ
+- docs/playbooks.md：5 内置模式拆解 + 新角色新模式编写教程 + 最佳实践/反模式
+- docs/README.en.md：英文 README
+- 文档由 3 executor 并行起草 + captain 抽查复核（实证机制应用于自身）
+
 ## 路线图
-- 0.3: docs 完整版（EN README / playbooks 编写指南）+ pi packages 原生分发 + GitHub Actions CI
+- 0.4: GitHub Actions CI（lint+test+gitleaks+release）+ 社区文件 + pi packages 分发
 - 0.3: docs 完整版（EN README / playbooks 编写指南）+ pi packages 原生分发
 - 0.4: Navigator 治理面落地（/moa audit + 成本基线报告）
