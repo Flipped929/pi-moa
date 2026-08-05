@@ -5,6 +5,7 @@ PI_DIR="${PI_AGENT_DIR:-$HOME/.pi/agent}"
 
 echo "🐙 pi-moa uninstaller"
 rm -f "$PI_DIR/extensions/moa-mode.ts" "$PI_DIR/extensions/scope-guard.ts"
+rm -rf "$PI_DIR/extensions/scope-guard"
 rm -rf "$PI_DIR/extensions/subagent"
 for a in executor analyst critic devil; do rm -f "$PI_DIR/agents/$a.md"; done
 echo "✅ 已移除扩展与角色文件"

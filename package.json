@@ -1,0 +1,17 @@
+{
+  "name": "pi-moa",
+  "version": "0.1.0",
+  "description": "Multi-model orchestration for the pi coding agent: captain dispatches, cheap sub-models execute, governance plane watches.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "e2e": "bash scripts/e2e-smoke.sh"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^3.0.0",
+    "vitest": "^3.0.0"
+  }
+}

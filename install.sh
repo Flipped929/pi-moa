@@ -20,9 +20,14 @@ backup_if_exists() {
 
 # 1. 扩展
 mkdir -p "$PI_DIR/extensions/subagent"
-for f in moa-mode.ts scope-guard.ts; do
-  backup_if_exists "$PI_DIR/extensions/$f"
-  cp "$SRC/extensions/$f" "$PI_DIR/extensions/$f"
+backup_if_exists "$PI_DIR/extensions/moa-mode.ts"
+cp "$SRC/extensions/moa-mode.ts" "$PI_DIR/extensions/moa-mode.ts"
+# scope-guard v3 起为目录结构；清理旧版平铺文件（避免双加载）
+rm -f "$PI_DIR/extensions/scope-guard.ts"
+mkdir -p "$PI_DIR/extensions/scope-guard"
+for f in index.ts core.ts; do
+  backup_if_exists "$PI_DIR/extensions/scope-guard/$f"
+  cp "$SRC/extensions/scope-guard/$f" "$PI_DIR/extensions/scope-guard/$f"
 done
 for f in index.ts agents.ts; do
   backup_if_exists "$PI_DIR/extensions/subagent/$f"
