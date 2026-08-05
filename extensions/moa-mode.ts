@@ -261,7 +261,14 @@ export default function (pi: ExtensionAPI) {
 				const L: string[] = [];
 				L.push(`🐙 MoA ${state.enabled ? "ON" : "OFF"} · 任务记录 ${moaDirCount(ctx.cwd)} 个`);
 				// 三层：调度 captain（聚合裁决）/ 监测审计 Navigator / 执行子模型
-				const sf = findSessionFile(ctx.cwd);
+				// 会话文件优先用官方 API 精确锁定本会话（encoding 猜测不可靠，曾致面板串会话）
+				const sf = (() => {
+					try {
+						const f = (ctx as any).sessionManager?.getSessionFile?.();
+						if (f && fs.existsSync(f)) return f;
+					} catch { /* fall through */ }
+					return findSessionFile(ctx.cwd);
+				})();
 				const stats = sf ? parseSessionStats(sf) : null;
 				L.push(stats
 					? `【captain·调度】k3 · ↑${fmtTok(stats.captain.input)} ↓${fmtTok(stats.captain.output)}${stats.captain.cost ? ` $${stats.captain.cost.toFixed(2)}` : ""}`
