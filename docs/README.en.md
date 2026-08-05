@@ -1,4 +1,4 @@
-# pi-moa 🐙
+# Pi-MoA 🐙
 
 **Multi-model orchestration for the [pi coding agent](https://github.com/earendil-works/pi-mono): one captain model dispatches, cheap sub-models execute, an independent governance plane watches.**
 
@@ -14,6 +14,8 @@ Turn pi into a "player-coach" multi-model system: a strong model (Kimi K3 / Clau
 - Routing alone isn't enough: you also need hard security boundaries, quality gates, and cost baselines
 
 ## Architecture in 30 seconds
+
+![Pi-MoA dual-plane architecture](assets/architecture.svg)
 
 ```
 you

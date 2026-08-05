@@ -1,4 +1,4 @@
-# pi-moa 🐙
+# Pi-MoA 🐙
 
 **Multi-model orchestration for the [pi coding agent](https://github.com/earendil-works/pi-mono): one captain model dispatches, cheap sub-models execute, an independent governance plane watches.**
 
@@ -14,6 +14,8 @@
 - 纯路由不够：还需要安全硬边界、质量门、成本基线对比
 
 ## 30 秒理解架构
+
+![Pi-MoA 双平面架构](docs/assets/architecture.svg)
 
 ```
 你

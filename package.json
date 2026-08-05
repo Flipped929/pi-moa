@@ -1,7 +1,7 @@
 {
   "name": "pi-moa",
   "version": "0.1.0",
-  "description": "Multi-model orchestration for the pi coding agent: captain dispatches, cheap sub-models execute, governance plane watches.",
+  "description": "Pi-MoA — Multi-model orchestration for the pi coding agent: captain dispatches, cheap sub-models execute, governance plane watches.",
   "license": "MIT",
   "type": "module",
   "private": true,
