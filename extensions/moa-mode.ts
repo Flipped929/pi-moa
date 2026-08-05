@@ -33,6 +33,18 @@ function fmtDur(ms: number): string {
 	return s >= 3600 ? `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`;
 }
 
+/** 任务文本 → 概括描述（用户要求：看概括不看路径）。优先【概括】标记；其次「执行（概括）」括号；再剥任务卡路径前缀 */
+function summarizeTask(raw: string): string {
+	let t = (raw ?? "").replace(/\s+/g, " ").trim();
+	const bracket = t.match(/【(.{2,40}?)】/);
+	if (bracket) return bracket[1];
+	const paren = t.match(/执行（([^（）]{4,40}?)）/);
+	if (paren) return paren[1];
+	t = t.replace(/^先读任务卡\s+\S+\s*(并|，)?\s*/, "");
+	t = t.replace(/\/[^\s]*\.md/g, "").trim();
+	return t.slice(0, 36) || "（无描述）";
+}
+
 /** 在跑子代理：ps 扫描 pi --mode json 进程（PI_MOA_AGENT 由 subagent 扩展注入 env） */
 function listRunningSubagents(): RunningAgent[] {
 	try {
@@ -43,7 +55,7 @@ function listRunningSubagents(): RunningAgent[] {
 			if (line.includes("ps -E")) continue;
 			const parts = line.trim().split(/\s+/);
 			if (parts[0] === String(process.pid)) continue;
-			const task = (line.split("Task: ")[1] ?? "").trim().slice(0, 32);
+			const task = summarizeTask(line.split("Task: ")[1] ?? "");
 			rows.push({
 				agent: line.match(/PI_MOA_AGENT=([\w-]+)/)?.[1] ?? "?",
 				model: line.match(/--model\s+(\S+)/)?.[1]?.split("/").pop() ?? "default",
@@ -100,8 +112,7 @@ function parseSessionStats(file: string): {
 				}
 				for (const c of m.content ?? []) {
 					if (c?.type === "toolCall" && c?.name === "subagent" && o.timestamp) {
-						const t = c.arguments ? String(c.arguments).slice(0, 32) : "";
-						callTs.set(c.id, { ts: Date.parse(o.timestamp), task: t });
+						callTs.set(c.id, { ts: Date.parse(o.timestamp), task: summarizeTask(String(c.arguments ?? "")) });
 					}
 				}
 			} else if (m.role === "toolResult" && m.toolName === "subagent" && m.details?.results) {
@@ -116,7 +127,7 @@ function parseSessionStats(file: string): {
 					agg.cost += r.usage?.cost?.total ?? r.usage?.cost ?? 0;
 					if (dur != null) agg.durs.push(dur);
 					byModel.set(model, agg);
-					recent.push({ agent: r.agent ?? "?", model, task: String(r.task ?? call?.task ?? "").slice(0, 32), dur });
+					recent.push({ agent: r.agent ?? "?", model, task: summarizeTask(String(r.task ?? call?.task ?? "")), dur });
 				}
 			}
 		}
@@ -183,7 +194,8 @@ const ORCHESTRATION_RULES = `
    - 抽查结果写入终稿（“已抽查 N 项，复核率 X%”），未抽查的结论标注“未经复核”
 4. 任务卡必须含：goal / scope(可写路径) / context_files / 输出要求(结果卡≤300字)。
 5. 任务记录：任务开始先建 .pi/moa/<任务名>/ 目录，任务卡、结果卡、handoff 包落盘（task.md / results/*.md / handoffs/*.md），每个运行单元记录 session_id/run_id/actor/读写范围/risk_level/outputs。
-6. 你始终掌握全部通讯：子代理间不直连，冲突由你裁决；拿不准的升级给用户。`;
+6. 你始终掌握全部通讯：子代理间不直连，冲突由你裁决；拿不准的升级给用户。
+7. 联网搜索工具优先级：web-search-free 是托底手段，仅在其他网络搜索工具/skill 不可用时使用；凡有更好用的搜索途径（如其他搜索 skill、API、专用工具）一律优先用更好的。派调研类任务时在任务卡中注明此优先级。`;
 
 interface MoaState {
 	enabled: boolean;

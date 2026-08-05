@@ -13,6 +13,8 @@ export interface AgentConfig {
 	description: string;
 	tools?: string[];
 	model?: string;
+	/** pi 思考档（off|minimal|low|medium|high|xhigh|max），对应 CLI --thinking */
+	thinking?: string;
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -65,6 +67,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			description: frontmatter.description,
 			tools: tools && tools.length > 0 ? tools : undefined,
 			model: frontmatter.model,
+			thinking: frontmatter.thinking,
 			systemPrompt: body,
 			source,
 			filePath,

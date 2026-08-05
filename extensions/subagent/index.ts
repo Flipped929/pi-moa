@@ -293,6 +293,7 @@ async function runSingleAgent(
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (agent.model) args.push("--model", agent.model);
+	if (agent.thinking) args.push("--thinking", agent.thinking); // 用户裁决：DS 子模型 max 思考档
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
