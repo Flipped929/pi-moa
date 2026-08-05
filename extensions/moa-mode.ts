@@ -106,52 +106,74 @@ export default function (pi: ExtensionAPI) {
 		return null;
 	}
 
+	async function handle(sub: string, rest: string[], ctx: any) {
+		switch (sub) {
+			case "on": {
+				state.enabled = true;
+				let note = "";
+				if (!isSubagent()) {
+					const gi = ensureBlackboard(ctx.cwd);
+					if (gi) note = `（${gi}）`;
+				}
+				ctx.ui.notify(
+					`🐙 pi-moa 已开启 ${agentRoster()}${note}`,
+					"info",
+				);
+				break;
+			}
+			case "off":
+				state.enabled = false;
+				ctx.ui.notify("pi-moa 已关闭，回到单模型模式", "info");
+				break;
+			case "status": {
+				const board = isSubagent() ? "n/a（子代理进程）" : `${moaDirCount(ctx.cwd)} 个任务记录`;
+				ctx.ui.notify(
+					`pi-moa ${state.enabled ? "🟢 开启" : "⚪ 关闭"}\n角色：${agentRoster()}\n黑板：${board}`,
+					"info",
+				);
+				break;
+			}
+			case "review": {
+				const topic = rest.join(" ").trim();
+				if (!topic) {
+					ctx.ui.notify("用法：/moa review <主题> 或 /moa-review <主题>", "warning");
+					return;
+				}
+				state.enabled = true;
+				const gi = ensureBlackboard(ctx.cwd);
+				if (gi) ctx.ui.notify(gi, "info");
+				ctx.sendUserMessage(REVIEW_PROMPT(topic));
+				break;
+			}
+			default:
+				ctx.ui.notify("用法：/moa on|off|status|review <主题>（快捷：/moa-on /moa-off /moa-status /moa-review）", "warning");
+		}
+	}
+
 	pi.registerCommand("moa", {
 		description: "pi-moa 多模型协同：/moa on|off|status|review <主题>",
 		handler: async (args, ctx) => {
 			const [sub, ...rest] = (args ?? "").trim().split(/\s+/);
-			switch (sub) {
-				case "on": {
-					state.enabled = true;
-					let note = "";
-					if (!isSubagent()) {
-						const gi = ensureBlackboard(ctx.cwd);
-						if (gi) note = `（${gi}）`;
-					}
-					ctx.ui.notify(
-						`🐙 pi-moa 已开启 ${agentRoster()}${note}`,
-						"info",
-					);
-					break;
-				}
-				case "off":
-					state.enabled = false;
-					ctx.ui.notify("pi-moa 已关闭，回到单模型模式", "info");
-					break;
-				case "status": {
-					const board = isSubagent() ? "n/a（子代理进程）" : `${moaDirCount(ctx.cwd)} 个任务记录`;
-					ctx.ui.notify(
-						`pi-moa ${state.enabled ? "🟢 开启" : "⚪ 关闭"}\n角色：${agentRoster()}\n黑板：${board}`,
-						"info",
-					);
-					break;
-				}
-				case "review": {
-					const topic = rest.join(" ").trim();
-					if (!topic) {
-						ctx.ui.notify("用法：/moa review <主题>", "warning");
-						return;
-					}
-					state.enabled = true;
-					const gi = ensureBlackboard(ctx.cwd);
-					if (gi) ctx.ui.notify(gi, "info");
-					ctx.sendUserMessage(REVIEW_PROMPT(topic));
-					break;
-				}
-				default:
-					ctx.ui.notify("用法：/moa on|off|status|review <主题>", "warning");
-			}
+			await handle(sub ?? "", rest, ctx);
 		},
+	});
+
+	// 快捷别名命令
+	pi.registerCommand("moa-on", {
+		description: "pi-moa：开启多模型协同（= /moa on）",
+		handler: async (_args, ctx) => handle("on", [], ctx),
+	});
+	pi.registerCommand("moa-off", {
+		description: "pi-moa：关闭协同（= /moa off）",
+		handler: async (_args, ctx) => handle("off", [], ctx),
+	});
+	pi.registerCommand("moa-status", {
+		description: "pi-moa：状态（= /moa status）",
+		handler: async (_args, ctx) => handle("status", [], ctx),
+	});
+	pi.registerCommand("moa-review", {
+		description: "pi-moa：评审模式（= /moa review <主题>）",
+		handler: async (args, ctx) => handle("review", (args ?? "").trim().split(/\s+/), ctx),
 	});
 
 	// 主会话注入调度规则；子代理进程跳过（避免规则套娃）
