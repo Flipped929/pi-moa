@@ -38,7 +38,7 @@ captain（强模型, pi 主会话）── 拆片/派活/抽查/裁决
 前置：已安装 [pi](https://github.com/earendil-works/pi-mono)，且任一模型 provider 可用。
 
 ```bash
-git clone https://github.com/<you>/pi-moa.git && cd pi-moa
+git clone https://github.com/Flipped929/pi-moa.git && cd pi-moa
 ./install.sh                      # 幂等，自动备份
 pi                                # 打开 pi
 /moa-on                           # 开启协同模式（快捷命令）

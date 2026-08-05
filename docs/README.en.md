@@ -38,7 +38,7 @@ protected paths write-ban · sub-agents confined to cwd (incl. bash-redirect byp
 Prerequisite: [pi](https://github.com/earendil-works/pi-mono) installed, with at least one model provider configured.
 
 ```bash
-git clone https://github.com/<you>/pi-moa.git && cd pi-moa
+git clone https://github.com/Flipped929/pi-moa.git && cd pi-moa
 ./install.sh                      # idempotent, auto-backup
 pi
 /moa-on                           # enable orchestration
