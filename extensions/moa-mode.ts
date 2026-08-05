@@ -1,6 +1,6 @@
 /**
  * moa-mode — pi-moa 多模型协同总开关（P2 核心交付）
- * @version v1.3-2026-08-05（moa-review 架构化：多模型多角色多 agent 多轮联合评审至零可执行，skills 感知）
+ * @version v1.4-2026-08-05（moa-status 台账化：subagent 扩展直写 runs.jsonl 结构化台账，status 只读台账折叠，废除会话/ps 解析）
  *
  * 命令：
  *   /moa on      开启协同模式（所有任务自动按模式拆片派活）
@@ -18,12 +18,34 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-// ── /moa status 数据层（三层：调度 captain/监测审计 Navigator/执行子模型）────────────────
-interface RunningAgent { agent: string; model: string; etime: string; task: string }
-interface ModelAgg { tasks: number; input: number; output: number; cost: number; durs: number[] }
+// ── /moa status 数据层（三层：调度 captain/监测审计 Navigator/执行子模型）
+// 三代血泪：从自由文本/会话 jsonl 解析任务信息必炸（路径截断/中文标点/串会话）。
+// 现改为：subagent 扩展直写结构化运行台账 runs.jsonl（append-only JSONL），
+// status 只读台账折叠状态——已删 findSessionFile/parseSessionStats/listRunningSubagents（ps/会话解析）。
+// ──────────────────────────────────────────────────────────────
+const LEDGER_FILE = path.join(process.env.HOME ?? "", ".pi/agent/moa/runs.jsonl");
+
+interface LedgerStart {
+	event: "start";
+	runId: string;
+	ts: number;
+	pid: number;
+	agent: string;
+	model: string | null;
+	summary: string;
+}
+interface LedgerEnd {
+	event: "end";
+	runId: string;
+	ts: number;
+	agent: string;
+	model: string | null;
+	summary: string;
+	exitCode: number;
+	usage: { input: number; output: number; costTotal: number; turns: number };
+}
 
 function fmtTok(n: number): string {
 	return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -33,113 +55,58 @@ function fmtDur(ms: number): string {
 	return s >= 3600 ? `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`;
 }
 
-/** 任务文本 → 概括描述（用户要求：看概括不看路径）。优先【概括】标记；其次「执行（概括）」括号；再剥任务卡路径前缀 */
-function summarizeTask(raw: string): string {
-	let t = (raw ?? "").replace(/\s+/g, " ").trim();
-	const bracket = t.match(/【(.{2,40}?)】/);
-	if (bracket) return bracket[1];
-	const paren = t.match(/执行（([^（）]{4,40}?)）/);
-	if (paren) return paren[1];
-	// 兑底：剥“先读任务卡 <path>”前缀；删整段路径 token；再取第一个有意义的动词短语
-	t = t.replace(/^先读任务卡\s+\S+\s*(和|与|并|，|、)?\s*/, "");
-	t = t.replace(/\S*\/[^\s，。；、]*/g, "").replace(/\s+/g, " ").trim();
-	// 去掉开头残留的连词/标点（“和 ，按卡修复”类）
-	t = t.replace(/^[和与并以及，、。\.\s]+/, "");
-	const m = t.match(/(严格按卡)?(.{4,36}?)(。|；|;|结果卡|不 commit|$)/);
-	return (m?.[2] ?? t).trim().slice(0, 36) || "（无描述）";
-}
-
-/** 在跑子代理：ps 扫描 pi --mode json 进程（PI_MOA_AGENT 由 subagent 扩展注入 env） */
-function listRunningSubagents(): RunningAgent[] {
+/** 读台账：starts/ends 按写入顺序返回（append-only） */
+function readLedger(): { starts: LedgerStart[]; ends: LedgerEnd[] } {
+	const starts: LedgerStart[] = [];
+	const ends: LedgerEnd[] = [];
 	try {
-		const out = execFileSync("ps", ["-E", "-eo", "pid=,etime=,args="], { encoding: "utf-8", timeout: 5000 });
-		const rows: RunningAgent[] = [];
-		for (const line of out.split("\n")) {
-			if (!line.includes("--mode") || !line.includes("json") || !line.includes("Task: ")) continue;
-			if (line.includes("ps -E")) continue;
-			const parts = line.trim().split(/\s+/);
-			if (parts[0] === String(process.pid)) continue;
-			const task = summarizeTask(line.split("Task: ")[1] ?? "");
-			rows.push({
-				agent: line.match(/PI_MOA_AGENT=([\w-]+)/)?.[1] ?? "?",
-				model: line.match(/--model\s+(\S+)/)?.[1]?.split("/").pop() ?? "default",
-				etime: parts[1] ?? "?",
-				task,
-			});
+		for (const line of fs.readFileSync(LEDGER_FILE, "utf-8").split("\n")) {
+			if (!line.trim()) continue;
+			try {
+				const o = JSON.parse(line);
+				if (o?.event === "start") starts.push(o as LedgerStart);
+				else if (o?.event === "end") ends.push(o as LedgerEnd);
+			} catch { /* 坏行跳过 */ }
 		}
-		return rows;
-	} catch { return []; }
+	} catch { /* 台账缺失/未创建 */ }
+	return { starts, ends };
 }
 
-/** 会话文件：优先当前 cwd 对应目录的最新 jsonl，失败则全局最新 */
-function findSessionFile(cwd: string): string | null {
-	const base = path.join(process.env.HOME ?? "", ".pi/agent/sessions");
-	const encoded = cwd.replace(/\//g, "-");
-	const candidates: string[] = [];
-	const pushJsonl = (dir: string) => {
-		try {
-			for (const f of fs.readdirSync(dir)) if (f.endsWith(".jsonl")) candidates.push(path.join(dir, f));
-		} catch { /* 目录不存在 */ }
-	};
-	pushJsonl(path.join(base, encoded));
-	if (!candidates.length) {
-		try {
-			for (const d of fs.readdirSync(base)) pushJsonl(path.join(base, d));
-		} catch { return null; }
-	}
-	if (!candidates.length) return null;
-	return candidates.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
-}
-
-/** 解析会话文件：调度层消耗（主会话 assistant usage 求和）+ 子模型已完成任务（subagent toolResult details） */
-function parseSessionStats(file: string): {
-	captain: { input: number; output: number; cost: number };
-	byModel: Map<string, ModelAgg>;
-	recent: { agent: string; model: string; task: string; dur: number | null }[];
-	lastAt: number;
-} {
-	const captain = { input: 0, output: 0, cost: 0 };
-	const byModel = new Map<string, ModelAgg>();
-	const recent: { agent: string; model: string; task: string; dur: number | null }[] = [];
-	let lastAt = 0; // 最近一次子模型任务完成时间（ms）
-	const callTs = new Map<string, { ts: number; task: string }>();
+/** pid 存活探测（信号 0 不杀进程）；EPERM=进程存在但属他人 */
+function isPidAlive(pid: number): boolean {
+	if (!pid || pid <= 0) return false;
 	try {
-		for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
+		process.kill(pid, 0);
+		return true;
+	} catch (e) {
+		return (e as NodeJS.ErrnoException)?.code === "EPERM";
+	}
+}
+
+/** 今日 0 点（本地时区）毫秒时间戳，用于「今日 end 聚合」 */
+function startOfToday(): number {
+	const d = new Date();
+	d.setHours(0, 0, 0, 0);
+	return d.getTime();
+}
+
+/** captain 消耗：仅官方 sessionManager 精确锁定的本会话 assistant usage 求和（不解析任务信息） */
+function readCaptainUsage(sessionFile: string): { input: number; output: number; cost: number } | null {
+	const cap = { input: 0, output: 0, cost: 0 };
+	try {
+		for (const line of fs.readFileSync(sessionFile, "utf-8").split("\n")) {
 			if (!line) continue;
 			let o: any;
 			try { o = JSON.parse(line); } catch { continue; }
 			const m = o?.message;
-			if (!m) continue;
-			if (m.role === "assistant") {
-				if (m.usage) {
-					captain.input += m.usage.input ?? 0;
-					captain.output += m.usage.output ?? 0;
-					captain.cost += m.usage.cost?.total ?? 0;
-				}
-				for (const c of m.content ?? []) {
-					if (c?.type === "toolCall" && c?.name === "subagent" && o.timestamp) {
-						callTs.set(c.id, { ts: Date.parse(o.timestamp), task: summarizeTask(String(c.arguments ?? "")) });
-					}
-				}
-			} else if (m.role === "toolResult" && m.toolName === "subagent" && m.details?.results) {
-				if (o.timestamp) lastAt = Math.max(lastAt, Date.parse(o.timestamp));
-				const call = callTs.get(m.toolCallId);
-				const dur = call && o.timestamp ? Date.parse(o.timestamp) - call.ts : null;
-				for (const r of m.details.results) {
-					const model = (r.model ?? "unknown").split("/").pop() ?? "unknown";
-					const agg = byModel.get(model) ?? { tasks: 0, input: 0, output: 0, cost: 0, durs: [] };
-					agg.tasks += 1;
-					agg.input += r.usage?.input ?? 0;
-					agg.output += r.usage?.output ?? 0;
-					agg.cost += r.usage?.cost?.total ?? r.usage?.cost ?? 0;
-					if (dur != null) agg.durs.push(dur);
-					byModel.set(model, agg);
-					recent.push({ agent: r.agent ?? "?", model, task: summarizeTask(String(r.task ?? call?.task ?? "")), dur });
-				}
+			if (m?.role === "assistant" && m?.usage) {
+				cap.input += m.usage.input ?? 0;
+				cap.output += m.usage.output ?? 0;
+				cap.cost += m.usage.cost?.total ?? 0;
 			}
 		}
-	} catch { /* 会话文件读取失败容忍 */ }
-	return { captain, byModel, recent: recent.slice(-5), lastAt };
+	} catch { return null; }
+	return cap;
 }
 
 /** Navigator 状态：navigator-watch 落盘的状态文件（可能不存在） */
@@ -160,8 +127,10 @@ const REVIEW_PROMPT = (topic: string) =>
 	`[pi-moa 多模型多角色多 agent 多轮联合评审] 主题：${topic}
 目标：优化至零可执行状态（分 Phase、每 Phase 带验证与回滚、无未裁决开放问题或已显式移交我决策）。
 
-编队（本次评审强制明示）：
-- analyst / critic = DeepSeek-V4-flash（executor/analyst/critic 角色）
+评审视角（v1.5）：从 MoA 多模型架构角度联评——调度矩阵适配、角色分工、异构性覆盖、成本结构（K3/flash 配比）、防重叠税，不只是内容本身。
+
+编队（用户裁决：DeepSeek 充分利用，K3 只做异构挑战与裁决）：
+- analyst / critic / executor = DeepSeek-V4-flash（thinking:max，主力承担各维度初评与执行）
 - devil = Kimi K3 异构上下文（专抓 DeepSeek 家族共同盲区，前提层挑战）
 - 高难度判断/关键架构决策维度 → 升级你（captain K3）亲审；机械核对类维度 → 保持 flash
 - 评审开场白必须明示本次各维度模型分配与理由
@@ -170,7 +139,7 @@ skills 感知（强制）：开场先 find-skills 检索与主题相关的优质
 列出「采用/不采用」清单及理由；采用的 skill 必须先读其 SKILL.md 再评审。
 
 流程（按实际情况弹性执行）：
-- Round 1：各角色并行开火（结果卡落盘 .pi/moa/review-<主题>-<日期>/results/）
+- Round 1：各角色并行开火（结果卡落盘 .pi/moa/review-<主题>-<日期>/results/，必填 summary 字段）
 - Round 2：交叉质询（观点互喂再评，重点回应 devil 的前提挑战）
 - Round 3：你裁决收敛 → 零可执行终稿
 - 弹性条款：争议小可提前收敛（说明理由）；争议大/前提被动摇则加轮；
@@ -189,6 +158,7 @@ const ORCHESTRATION_RULES = `
    - 编码类（scope 天然不相交）→ 2-3 个并行 executor + critic 审 diff
    - 评审类（方案/设计评审，输入材料小）→ 3 个满编：analyst/critic/devil 对抗多轮 → 你裁决 → 零可执行终稿（每Phase有验证+回滚，开放问题移交用户）
    - 【review 前置】方案/设计/架构决策类输入，规模够大时在派编码前先走 /moa review 流水线（按实际情况定轮次深度）
+   - 【review 节点】按实际情况在以下节点主动发起 review（不必等用户点名）：批次收官后、critic 连续两次 fail、关键架构分拱、模型/技术选型变更前
    - 调研类（多角度外部主题）→ 2-3 个 analyst 分角度 → critic 查缺 → 你综合
    - 写作类 → 1 个 executor 起草 + 1 个 critic 挑刺 → 你定稿
    - 拿不准：先派 1 个 analyst 探测再定
@@ -199,7 +169,7 @@ const ORCHESTRATION_RULES = `
    - 必抽项：全过/无异常类结论、安全相关结论、影响后续决策的关键判断
    - 发现一处造假/误判 → 该子模型本次产出全量复核，并在任务记录中记录误判事件（供 navigator 统计角色可信度）
    - 抽查结果写入终稿（“已抽查 N 项，复核率 X%”），未抽查的结论标注“未经复核”
-4. 任务卡必须含：goal / scope(可写路径) / context_files / 输出要求(结果卡≤300字)。
+4. 任务卡必须含：goal / scope(可写路径) / context_files / 输出要求(结果卡≤300字)；派活时 subagent 工具的 task/tasks/chain 条目必须填 summary 字段（≤20字任务概括，用于 /moa status 状态面板显示）。
 5. 任务记录：任务开始先建 .pi/moa/<任务名>/ 目录，任务卡、结果卡、handoff 包落盘（task.md / results/*.md / handoffs/*.md），每个运行单元记录 session_id/run_id/actor/读写范围/risk_level/outputs。
 6. 你始终掌握全部通讯：子代理间不直连，冲突由你裁决；拿不准的升级给用户。
 7. 联网搜索工具优先级：web-search-free 是托底手段，仅在其他网络搜索工具/skill 不可用时使用；凡有更好用的搜索途径（如其他搜索 skill、API、专用工具）一律优先用更好的。派调研类任务时在任务卡中注明此优先级。`;
@@ -279,39 +249,67 @@ export default function (pi: ExtensionAPI) {
 				const boardBase = path.join(ctx.cwd, ".pi/moa");
 				const L: string[] = [];
 				L.push(`🐙 MoA ${state.enabled ? "ON" : "OFF"} · 任务记录 ${moaDirCount(ctx.cwd)} 个`);
-				// 三层：调度 captain（聚合裁决）/ 监测审计 Navigator / 执行子模型
-				// 会话文件优先用官方 API 精确锁定本会话（encoding 猜测不可靠，曾致面板串会话）
+				// 三层：调度 captain（聚合裁决）/ 监测审计 Navigator / 执行子模型（子模型层只读台账）
+				// captain 行：仅官方 sessionManager 精确锁定本会话（encoding 猜测曾致面板串会话），只求和 assistant usage
 				const sf = (() => {
 					try {
 						const f = (ctx as any).sessionManager?.getSessionFile?.();
 						if (f && fs.existsSync(f)) return f;
-					} catch { /* fall through */ }
-					return findSessionFile(ctx.cwd);
+					} catch { /* 无 session 文件 */ }
+					return null;
 				})();
-				const stats = sf ? parseSessionStats(sf) : null;
-				L.push(stats
-					? `【captain·调度】k3 · ↑${fmtTok(stats.captain.input)} ↓${fmtTok(stats.captain.output)}${stats.captain.cost ? ` $${stats.captain.cost.toFixed(2)}` : ""}`
+				const captain = sf ? readCaptainUsage(sf) : null;
+				L.push(captain
+					? `【captain·调度】k3 · ↑${fmtTok(captain.input)} ↓${fmtTok(captain.output)}${captain.cost ? ` $${captain.cost.toFixed(2)}` : ""}`
 					: `【captain·调度】k3 · 消耗见 /session`);
 				L.push(`【Navigator·监测审计】${readNavigatorState(boardBase)}`);
-				const running = listRunningSubagents();
-				const crew: string[] = [];
-				if (running.length) {
-					crew.push(`▶ 在跑 ${running.length}`);
-					for (const r of running) crew.push(`  ${r.agent} @${r.model} · ${r.etime} · ${r.task}`);
-				}
-				if (stats) {
-					for (const [model, agg] of [...stats.byModel.entries()].sort((a, b) => b[1].input - a[1].input)) {
-						const avg = agg.durs.length ? ` ⏱均${fmtDur(agg.durs.reduce((x, y) => x + y, 0) / agg.durs.length)}` : "";
-						crew.push(`Σ ${model} · ${agg.tasks}任务 ↑${fmtTok(agg.input)} ↓${fmtTok(agg.output)}${agg.cost ? ` $${agg.cost.toFixed(2)}` : ""}${avg}`);
+
+				const { starts, ends } = readLedger();
+				if (starts.length === 0 && ends.length === 0) {
+					L.push(`【子模型·台账】无记录（ledger 自今日起）`);
+				} else {
+					// 折叠：start 无配对 end 且 pid 存活 = 在跑；pid 已死 = 残留（崩溃/强杀）
+					const endByRunId = new Set(ends.map((e) => e.runId));
+					const running = starts.filter((s) => !endByRunId.has(s.runId) && isPidAlive(s.pid));
+					const stale = starts.filter((s) => !endByRunId.has(s.runId) && !isPidAlive(s.pid));
+
+					const crew: string[] = [];
+					if (running.length) {
+						crew.push(`▶ 在跑 ${running.length}`);
+						for (const r of running)
+							crew.push(`  ${r.agent} @${(r.model ?? "default").split("/").pop()} · ${fmtDur(Date.now() - r.ts)} · ${r.summary}`);
 					}
-					for (const r of stats.recent.slice(-3)) {
-						crew.push(`  ✓ ${r.agent} @${r.model}${r.dur != null ? ` ${fmtDur(r.dur)}` : ""} · ${r.task}`);
+					// 今日 end 聚合：Σ 各模型任务数 / tokens / 均价（按模型归一化展示）
+					const today = startOfToday();
+					const todayEnds = ends.filter((e) => e.ts >= today);
+					if (todayEnds.length) {
+						const byModel = new Map<string, { tasks: number; input: number; output: number; cost: number }>();
+						for (const e of todayEnds) {
+							const m = (e.model ?? "default").split("/").pop() ?? "default";
+							const agg = byModel.get(m) ?? { tasks: 0, input: 0, output: 0, cost: 0 };
+							agg.tasks += 1;
+							agg.input += e.usage?.input ?? 0;
+							agg.output += e.usage?.output ?? 0;
+							agg.cost += e.usage?.costTotal ?? 0;
+							byModel.set(m, agg);
+						}
+						for (const [model, agg] of [...byModel.entries()].sort((a, b) => b[1].input - a[1].input)) {
+							const avg = agg.tasks ? ` 均$${(agg.cost / agg.tasks).toFixed(3)}` : "";
+							crew.push(`Σ ${model} · ${agg.tasks}任务 ↑${fmtTok(agg.input)} ↓${fmtTok(agg.output)} $${agg.cost.toFixed(2)}${avg}`);
+						}
+					}
+					// 最近 5 条 end = ✓ 列表（最新在前）
+					for (const e of ends.slice(-5).reverse()) {
+						const s = starts.find((x) => x.runId === e.runId);
+						const dur = s ? e.ts - s.ts : null;
+						crew.push(`  ✓ ${e.agent} @${(e.model ?? "default").split("/").pop()}${dur != null ? ` ${fmtDur(dur)}` : ""} · ${e.summary}`);
+					}
+					// 当前状态行（用户要求）：在跑=台账在跑；空闲=最近完成于多久前
+					const lastAt = ends.length ? ends[ends.length - 1].ts : 0;
+					L.push(`【子模型】当前：${running.length ? `▶ 在跑 ${running.length} 个` : lastAt ? `空闲（最近完成 ${fmtDur(Date.now() - lastAt)}前）` : "空闲（台账无完成记录）"}`);
+					L.push(...crew);
+					if (stale.length) L.push(`  ↯ ${stale.length} 条未配对 start（进程已退出，可忽略）`);
 				}
-				}
-				// 当前状态行（用户要求）：在跑=实时进程；空闲=最近完成于多久前
-				const lastAgo = stats?.lastAt ? `${fmtDur(Date.now() - stats.lastAt)}前` : null;
-				L.push(`【子模型】当前：${running.length ? `▶ 在跑 ${running.length} 个` : lastAgo ? `空闲（最近完成 ${lastAgo}）` : "空闲（本会话未派活）"}`);
-				L.push(...crew);
 				L.push(`角色：${agentRoster()}`);
 				ctx.ui.notify(L.join("\n"), "info");
 				break;

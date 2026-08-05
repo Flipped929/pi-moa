@@ -10,6 +10,10 @@
  *   - Chain: { chain: [{ agent: "name", task: "... {previous} ..." }, ...] }
  *
  * Uses JSON mode to capture structured output from subagents.
+ *
+ * Writes a structured run ledger (~/.pi/agent/moa/runs.jsonl, append-only JSONL):
+ * each run gets independent start/end records, so `/moa status` can fold run
+ * state (running / per-model totals / recent) without parsing session files.
  */
 
 import { spawn } from "node:child_process";
@@ -34,6 +38,58 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
+
+// ── MoA 运行台账（append-only JSONL；/moa status 只读此台账，不再解析会话文件）──
+const LEDGER_PATH = path.join(os.homedir(), ".pi/agent/moa", "runs.jsonl");
+let ledgerRunCounter = 0;
+
+function nextRunId(): string {
+	ledgerRunCounter += 1;
+	return `${Date.now()}-${process.pid}-${ledgerRunCounter}`;
+}
+
+function ledgerAppend(record: Record<string, unknown>): void {
+	try {
+		fs.mkdirSync(path.dirname(LEDGER_PATH), { recursive: true });
+		fs.appendFileSync(LEDGER_PATH, JSON.stringify(record) + "\n", "utf-8");
+	} catch {
+		// 台账写入失败不阻塞派活
+	}
+}
+
+function logLedgerStart(agent: string, model: string | undefined, summary: string): string {
+	const runId = nextRunId();
+	ledgerAppend({
+		event: "start",
+		runId,
+		ts: Date.now(),
+		pid: process.pid,
+		agent,
+		model: model ?? null,
+		summary,
+	});
+	return runId;
+}
+
+function logLedgerEnd(
+	runId: string,
+	agent: string,
+	model: string | undefined,
+	summary: string,
+	exitCode: number,
+	usage: { input: number; output: number; cost: number; turns: number },
+): void {
+	ledgerAppend({
+		event: "end",
+		runId,
+		ts: Date.now(),
+		agent,
+		model: model ?? null,
+		summary,
+		exitCode,
+		usage: { input: usage.input, output: usage.output, costTotal: usage.cost, turns: usage.turns },
+	});
+}
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -269,6 +325,7 @@ async function runSingleAgent(
 	agents: AgentConfig[],
 	agentName: string,
 	task: string,
+	summary: string | undefined,
 	cwd: string | undefined,
 	step: number | undefined,
 	signal: AbortSignal | undefined,
@@ -290,6 +347,10 @@ async function runSingleAgent(
 			step,
 		};
 	}
+
+	// MoA 台账：每次运行独立 start 记录（summary 供 /moa status 状态面板显示；兜底取 task 前 36 字）
+	const summaryText = (summary ?? "").trim() || task.slice(0, 36);
+	const runId = logLedgerStart(agentName, agent.model, summaryText);
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (agent.model) args.push("--model", agent.model);
@@ -337,7 +398,12 @@ async function runSingleAgent(
 				cwd: cwd ?? defaultCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
-				env: { ...process.env, PI_MOA_SUBAGENT: "1", PI_MOA_AGENT: agentName },
+				env: {
+					...process.env,
+					PI_MOA_SUBAGENT: "1",
+					PI_MOA_AGENT: agentName,
+					PI_MOA_SUMMARY: summaryText.slice(0, 36),
+				},
 			});
 			let buffer = "";
 
@@ -427,18 +493,22 @@ async function runSingleAgent(
 			} catch {
 				/* ignore */
 			}
+		// MoA 台账：运行结束写 end 记录（含 exitCode 与 usage 汇总）
+		logLedgerEnd(runId, agentName, currentResult.model ?? agent.model, summaryText, currentResult.exitCode, currentResult.usage);
 	}
 }
 
 const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
+	summary: Type.Optional(Type.String({ description: "≤20字任务概括，仅用于 /moa status 状态面板显示" })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
+	summary: Type.Optional(Type.String({ description: "≤20字任务概括，仅用于 /moa status 状态面板显示" })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 });
 
@@ -450,6 +520,7 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
+	summary: Type.Optional(Type.String({ description: "≤20字任务概括，仅用于 /moa status 状态面板显示（single 模式）" })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
 	agentScope: Type.Optional(AgentScopeSchema),
@@ -557,6 +628,7 @@ export default function (pi: ExtensionAPI) {
 						agents,
 						step.agent,
 						taskWithContext,
+						step.summary,
 						step.cwd,
 						i + 1,
 						signal,
@@ -629,6 +701,7 @@ export default function (pi: ExtensionAPI) {
 						agents,
 						t.agent,
 						t.task,
+						t.summary,
 						t.cwd,
 						undefined,
 						signal,
@@ -671,6 +744,7 @@ export default function (pi: ExtensionAPI) {
 					agents,
 					params.agent,
 					params.task,
+					params.summary,
 					params.cwd,
 					undefined,
 					signal,
