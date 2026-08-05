@@ -180,7 +180,7 @@ model: ollama/qwen2.5-coder-14b
 
 | 规则 | 行为 | 例子 |
 |---|---|---|
-| `expandHome` | 仅 `~/` 前缀展开为主目录 | `~/.pi/agent/auth.json` → `/Users/you/.pi/agent/auth.json` |
+| `expandHome` | 仅 `~/` 前缀展开为主目录 | `~/.pi/agent/auth.json` → `~（展开为你的主目录）/.pi/agent/auth.json` |
 | `expandHome` | 单独 `~`、`~other/x` **不展开** | `~other/x` 原样保留（匹配不到，相当于无效条目） |
 | `normalizePath` | 反斜杠转正、压缩重复 `/`、去尾部 `/`（根目录除外） | `C:\a\b` → `C:/a/b`；`/a//b/` → `/a/b` |
 | `isProtectedPath` | 规范化后与 `protectedExact` 精确比较，或包含任一 `protectedParts` 片段 | `/work/proj/.env` 命中 `/.env/`；`/work/envy.ts` 不命中（需前面有 `/`） |
