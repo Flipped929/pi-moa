@@ -363,7 +363,7 @@ export default function (pi: ExtensionAPI) {
 				break;
 			}
 			default:
-				ctx.ui.notify("用法：/moa on|off|status|review <主题>（review=多模型多角色多agent多轮联合评审至零可执行，skills 感知）", "warning");
+				ctx.ui.notify("用法：/moa on|off|status|review <主题>|optimize [dry]（快捷：/moa-on /moa-off /moa-status /moa-review /moa-optimize）", "warning");
 		}
 	}
 
@@ -376,6 +376,10 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// 快捷别名命令
+	pi.registerCommand("moa-optimize", {
+		description: "pi-moa：双层自优化（= /moa optimize [dry]）——试错样本注入角色管理区+架构运行分析",
+		handler: async (args, ctx) => handle("optimize", (args ?? "").trim().split(/\s+/), ctx),
+	});
 	pi.registerCommand("moa-on", {
 		description: "pi-moa：开启多模型协同（= /moa on）",
 		handler: async (_args, ctx) => handle("on", [], ctx),
