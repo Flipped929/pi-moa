@@ -1,18 +1,33 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-self-optimize.py — pi-moa 双层自优化器（executor/DS 切片 OPT）
+self-optimize.py — pi-moa 双层自优化器（executor/DS 切片 OPT + OPTFIX 整改 2026-08-06）
 
 层 1 样本自优化：从 NAVIGATOR.md instinct YAML（误判事件+已知高频坑）取教训，
-  confidence>=0.5 注入 agents/*.md 的 <!-- MOA-LESSONS:BEGIN/END --> 管理区（幂等：同 id 更新不重加，块外零改动）；
-  <0.5 仅列报告。
-层 2 架构运行分析（纯只读）：runs.jsonl 台账（成本架构/效率）+ 黑板结果卡扫描（能力画像：任务域×角色 done 率）→
-  只出建议不自动改，分【自动应用-已做】/【需 captain 裁决】/【需用户裁决】三档。
+  confidence>=0.5 的教训进入「待注入清单」（用户批准制），
+  用户明确批准后 apply 才注入 agents/*.md 的 <!-- MOA-LESSONS:BEGIN/END --> 管理区
+  （幂等：同 id 更新不重加，块外零改动）；<0.5 仅列报告。
+层 2 架构运行分析（纯只读）：runs.jsonl 台账（成本架构/效率）+ 黑板结果卡扫描（能力画像）→
+  只出建议不自动改，分【待批准注入】/【已批准注入】/【仅记录】/【需 captain 裁决】/【需用户裁决】。
 
-用法：
-  python3 self-optimize.py            # 真跑：写报告 + 注入管理区
-  python3 self-optimize.py --dry      # 只打印，不写任何文件
-  python3 self-optimize.py --runs ... --navigator ... --blackboard ... --agents-dir ... --report ...
+模式（2026-08-06 用户裁决：写安全 + 用户批准制）：
+  python3 self-optimize.py             # report（默认）：只读分析 + 报告 + 待注入清单（pending-injections.md），
+                                       #   永不写 agents/*.md —— 未经用户批准不产生任何文件改动（对 agents 而言）
+  python3 self-optimize.py apply       # apply：仅用户明确批准后调用；把 pending 清单写入 agents 管理区
+                                       #   （写前逐文件 .bak-<时间戳> 备份；写后回读校验 BEGIN/END+frontmatter，
+                                       #    校验失败自动从 .bak 恢复并报错退出非零）
+  python3 self-optimize.py --dry       # 零写盘：只打印报告与清单预览（三遍验证用）
+
+约束（OPTFIX 必修）：
+  1. 写安全：.bak 备份 + 写后回读校验 + 失败自动恢复；默认行为 dry（只出报告不写），写盘需显式 apply
+  2. 用户批准制：默认跑只产出报告+待注入清单（~/.pi/agent/moa/pending-injections.md，
+     含每条教训的 创建日期/id/confidence/evidence/拟注入角色）；apply 才写入管理区；
+     报告顶部明示"未经用户批准，本报告不产生任何文件改动"
+  3. flash 成本口径：读 ~/.pi/agent/models.json——deepseek 模型若无 cost 字段，层2 对无计价模型输出
+     "成本=未配置计价（0 为口径缺失非免费）"；captain 占比等成本结论只基于有计价模型并注明口径；
+     不得把 0 当真实成本下结论；models.json 占位 cost 标注"占位待核价"，报告【需用户裁决】列出实际价格待确认
+  4. TTL：pending-injections.md 条目带创建日期；超 30 天未批准自动移入归档区（报告注明"已归档"），
+     不再出现在待注入清单
 
 零第三方依赖（python3 标准库）。YAML 用宽容正则解析（instinct 块为 JSON 兼容子集）。
 """
@@ -21,12 +36,15 @@ import datetime
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
 HOME = Path.home()
 DEFAULT_AGENTS = HOME / ".pi" / "agent" / "agents"
 DEFAULT_RUNS = HOME / ".pi" / "agent" / "moa" / "runs.jsonl"
+DEFAULT_PENDING = HOME / ".pi" / "agent" / "moa" / "pending-injections.md"
+DEFAULT_MODELS_JSON = HOME / ".pi" / "agent" / "models.json"
 # 黑板根默认自动发现：环境变量 PI_MOA_BOARD > 常见项目位置 > 当前目录
 def _discover_board() -> Path:
     import os
@@ -46,6 +64,9 @@ BEGIN = "<!-- MOA-LESSONS:BEGIN（self-optimize.py 管理区，勿手改；块�
 END = "<!-- MOA-LESSONS:END -->"
 
 THRESHOLD = 0.5          # 层 1 注入阈值
+TTL_DAYS = 30            # 待注入条目超 30 天未批准 → 归档
+ROLE_LABEL = "executor/executor-k3/analyst/critic/devil（agents/*.md 全部）"
+UNPRICED_LABEL = "未配置计价（0 为口径缺失，非免费）"
 KPI_INPUT_RATIO = 0.30   # captain 输入占比 KPI
 ALERT_INPUT_RATIO = 0.50 # 告警线
 DUR_OUTLIER = 2.0        # 时长离群倍数（>2 倍均值）
@@ -151,19 +172,51 @@ def parse_existing_lines(block_text):
     return out
 
 
-def build_block(lessons):
-    """lessons(list[dict]) → 管理区完整块文本（按 confidence 降序、id 升序）。"""
-    lines = [BEGIN]
-    for inst in sorted(lessons, key=lambda x: (-float(x.get("confidence", 0.3)), str(x.get("id", "")))):
-        lines.append(lesson_line(inst))
-    lines.append(END)
-    return "\n".join(lines)
+def build_block(lines):
+    """lesson 行列表 → 管理区完整块文本（按 confidence 降序、id 升序）。"""
+    out = [BEGIN]
+    out.extend(lines)
+    out.append(END)
+    return "\n".join(out)
 
 
-def inject_into_file(path, lessons, dry):
-    """注入/更新单个 agent 文件管理区。返回 (changed, action_desc)。幂等：内容相同则不动。"""
+def _backup_path(path):
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    return path.with_name("{}.bak-{}".format(path.name, ts))
+
+
+def verify_injection(path):
+    """写后回读校验：BEGIN/END 标记完整 + frontmatter 完整可解析。返回错误列表（空=通过）。"""
+    errs = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as e:
+        return ["文件不可读: {}".format(e)]
+    if BEGIN not in text:
+        errs.append("BEGIN 标记缺失")
+    if END not in text:
+        errs.append("END 标记缺失")
+    if BEGIN in text and END in text and text.index(END) <= text.index(BEGIN):
+        errs.append("END 位置先于 BEGIN")
+    lines = text.split("\n")
+    if lines and lines[0].strip() == "---":
+        close = next((k for k in range(1, len(lines)) if lines[k].strip() == "---"), None)
+        if close is None:
+            errs.append("frontmatter 无闭合 ---")
+        else:
+            fm = "\n".join(lines[1:close])
+            if not re.search(r"^\s*(name|version|description|model|tools|thinking)\s*:", fm, re.M):
+                errs.append("frontmatter 关键字段缺失")
+    return errs
+
+
+def inject_into_file(path, lines, do_write):
+    """注入/更新单个 agent 文件管理区。返回 (changed, action_desc)。幂等：内容相同则不动。
+
+    do_write=True 时写盘（仅 apply 模式调用）：写前 .bak 备份；写后回读校验（BEGIN/END 完整
+    + frontmatter 可解析），校验失败自动从 .bak 恢复并返回 verify-failed-restored。"""
     text = path.read_text(encoding="utf-8")
-    new_block = build_block(lessons)
+    new_block = build_block(lines)
     if BEGIN in text and END in text:
         i = text.index(BEGIN)
         j = text.index(END, i) + len(END)
@@ -177,9 +230,143 @@ def inject_into_file(path, lessons, dry):
             return False, "skip-broken-block"  # 半块残缺：不碰，留给 captain
         new_text = text.rstrip("\n") + "\n\n" + new_block + "\n"
         action = "created"
-    if not dry:
-        path.write_text(new_text, encoding="utf-8")
+    if do_write:
+        backup = _backup_path(path)
+        try:
+            shutil.copy2(path, backup)
+            path.write_text(new_text, encoding="utf-8")
+        except OSError as e:
+            return False, "write-failed: {}".format(e)
+        errs = verify_injection(path)
+        if errs:
+            try:
+                shutil.copy2(backup, path)  # 校验失败自动恢复
+            except OSError:
+                pass
+            return False, "verify-failed-restored: {}".format("; ".join(errs))
     return True, action
+
+
+# ---------------------------------------------------------------- 待注入清单（用户批准制 + TTL）
+
+PENDING_HEADER = """# pi-moa 待注入清单（用户批准制，2026-08-06 用户裁决）
+
+> ⚠ 默认（report）模式只产出本清单与报告，**不写 agents/*.md**。
+> 用户明确批准后执行 `python3 self-optimize.py apply`（或 `/moa optimize apply`），才把本清单写入各角色管理区
+> （写前 .bak 备份 + 写后回读校验）。创建超 {ttl} 天未批准自动移入归档区（不再出现在待注入清单）。
+> 行格式：- YYYY-MM-DD | <管理区行> | <拟注入角色> | <pending|applied|archived>
+
+""".format(ttl=TTL_DAYS)
+
+
+def entry_line(e):
+    return "- {} | {} | {} | {}".format(e["date"], e["line"], e["role"], e["status"])
+
+
+def conf_of(e):
+    m = re.search(r"\[([\d.]+)\]\[", e["line"])
+    return float(m.group(1)) if m else 0.0
+
+
+def id_of(e):
+    m = re.search(r"\]\[([^\]]+)\]", e["line"])
+    return m.group(1) if m else "?"
+
+
+def parse_pending(text):
+    """pending-injections.md → {status: {id: entry}}。行格式：- YYYY-MM-DD | <lesson line> | <role> | <status>"""
+    out = {"pending": {}, "applied": {}, "archived": {}}
+    cur = None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            h = line[3:].strip()
+            cur = next((k for k in out if h.startswith(k)), None)
+            continue
+        if not line.startswith("- "):
+            continue
+        m = re.match(r"^- (\d{4}-\d{2}-\d{2}) \| (.*) \| ([^|]*) \| (pending|applied|archived)$", line)
+        if not m:
+            continue
+        iid = id_of({"line": m.group(2)})
+        if iid == "?":
+            continue
+        out[m.group(4)][iid] = {"date": m.group(1), "line": m.group(2).strip(),
+                                "role": m.group(3).strip(), "status": m.group(4)}
+    return out
+
+
+def render_pending(pending, applied, archived, notes):
+    L = [PENDING_HEADER]
+    L.append("## 待注入（{} 条）".format(len(pending)))
+    for iid in sorted(pending, key=lambda x: (-conf_of(pending[x]), x)):
+        L.append(entry_line(pending[iid]))
+    L.append("\n## 已批准注入（{} 条，apply 后由待注入移入；源已删除的自动撤注）".format(len(applied)))
+    for iid in sorted(applied, key=lambda x: (-conf_of(applied[x]), x)):
+        L.append(entry_line(applied[iid]))
+    L.append("\n## 归档区（创建超 {} 天未批准，自动移入；{} 条）".format(TTL_DAYS, len(archived)))
+    for iid in sorted(archived):
+        L.append(entry_line(archived[iid]))
+    L.append("\n---\n> 最近归档/撤注记录：\n")
+    for n in notes:
+        L.append("- " + n)
+    return "\n".join(L) + "\n"
+
+
+def apply_ttl(pending, archived):
+    """待注入条目超 TTL_DAYS 未批准 → 移入归档区。返回被归档 id 列表。"""
+    cutoff = datetime.date.today() - datetime.timedelta(days=TTL_DAYS)
+    moved = []
+    for iid in list(pending.keys()):
+        try:
+            d = datetime.datetime.strptime(pending[iid]["date"], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        if d < cutoff:
+            e = pending.pop(iid)
+            e["status"] = "archived"
+            archived[iid] = e
+            moved.append(iid)
+    return moved
+
+
+def merge_into_pending(lessons_in, pending, applied, archived, today_iso):
+    """把 NAVIGATOR 教训并入待注入清单：
+    - 已批准/已归档的 id 不重复加入待注入；已在待注入的刷新内容（保留创建日期）
+    - 已批准注入但 NAVIGATOR 源已删除 → 撤注：移出已批准区（下次 apply 不再保留）
+    返回 (new_ids, dropped_ids)。"""
+    inst_by_id = {str(i.get("id", "")).strip(): i for i in lessons_in}
+    new_ids, dropped = [], []
+    for iid, inst in inst_by_id.items():
+        line = lesson_line(inst)
+        if iid in applied:
+            applied[iid]["line"] = line  # 内容刷新（保留原批准日期）
+            continue
+        if iid in archived:
+            continue  # 已归档不复活
+        if iid in pending:
+            pending[iid]["line"] = line  # 内容刷新，创建日期保留
+        else:
+            pending[iid] = {"date": today_iso, "line": line, "role": ROLE_LABEL, "status": "pending"}
+            new_ids.append(iid)
+    for iid in list(applied.keys()):
+        if iid not in inst_by_id:
+            del applied[iid]
+            dropped.append(iid)
+    return new_ids, dropped
+
+
+def existing_zone_ids(agents_dir):
+    """各 agent 文件管理区现有教训 id 集合（撤注检测用）。"""
+    ids = set()
+    for f in sorted(agents_dir.glob("*.md")):
+        try:
+            t = f.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if BEGIN in t and END in t:
+            i, j = t.index(BEGIN), t.index(END)
+            ids |= set(parse_existing_lines(t[i:j]).keys())
+    return ids
 
 
 # ---------------------------------------------------------------- 层 2：架构分析
@@ -336,13 +523,51 @@ def parallel_stats(runs):
     return max_conc
 
 
-def arch_analysis(runs, cards):
-    """层 2 全部分析 → dict（供报告渲染）。"""
+def load_pricing(models_json_path):
+    """~/.pi/agent/models.json → {model_id: {"priced": bool, "note": str}}。
+    计价口径（OPTFIX 必修 3）：有 cost 字段且任一项单价 >0 → 已计价；否则视为未配置计价
+    （cost 全 0 或缺失均为口径缺失，不是免费；costNote=占位待核价 的按未计价处理并在报告提示）。"""
+    pricing = {}
+    try:
+        data = json.loads(models_json_path.read_text(encoding="utf-8"))
+    except Exception:
+        return pricing
+    for prov in (data.get("providers") or {}).values():
+        for m in (prov.get("models") or []):
+            mid = str(m.get("id", "")).strip()
+            if not mid:
+                continue
+            cost = m.get("cost")
+            note = str(m.get("costNote", "") or "").strip()
+            priced = False
+            if isinstance(cost, dict):
+                rates = [cost.get(k) for k in ("input", "output", "cacheRead", "cacheWrite")]
+                if any(isinstance(x, (int, float)) and x > 0 for x in rates):
+                    priced = True
+            pricing[mid] = {"priced": priced, "note": note}
+    return pricing
+
+
+def match_pricing(model, pricing):
+    """台账 model 名 ↔ models.json id 匹配：全等或互相包含。返回 (priced, note) 或 (None, "")。"""
+    if not model:
+        return None, ""
+    if model in pricing:
+        return pricing[model]["priced"], pricing[model]["note"]
+    for mid, p in pricing.items():
+        if mid in model or model in mid:
+            return p["priced"], p["note"]
+    return None, ""
+
+
+def arch_analysis(runs, cards, pricing):
+    """层 2 全部分析 → dict（供报告渲染）。分析逻辑不变，仅成本口径标注（OPTFIX 必修 3）。"""
     res = {"models": {}, "k3_input_ratio": 0.0, "outliers_dur": [], "outliers_turns": [],
-           "matrix": {}, "domain_dist": {}, "max_concurrency": 0, "cost_zeros": [],
+           "matrix": {}, "domain_dist": {}, "max_concurrency": 0,
+           "unpriced_models": [], "zero_cost_priced": [],
            "kpi": {"status": "ok", "ratio": 0.0}, "blocked_points": []}
 
-    # --- 成本架构（按 model）---
+    # --- 成本架构（按 model；口径：仅已计价模型计真实成本）---
     per_model = {}
     for r in runs:
         if not r["has_end"]:
@@ -356,6 +581,15 @@ def arch_analysis(runs, cards):
         pm["cost"] += u.get("costTotal", 0) or 0
         pm["dur"] += r["dur_s"]
         pm["turns"] += u.get("turns", 0)
+    for m, pm in per_model.items():
+        priced, note = match_pricing(m, pricing)
+        pm["priced"] = bool(priced)
+        pm["price_note"] = note or ""
+        if pm["n"]:
+            if not priced:
+                res["unpriced_models"].append(m)   # 无计价 → 0 是口径缺失非免费
+            elif pm["cost"] == 0:
+                res["zero_cost_priced"].append(m)  # 已计价但全 0 → 需用户确认免费/漏记账
     res["models"] = per_model
     tot_in = sum(v["input"] for v in per_model.values())
     k3_in = sum(v["input"] for k, v in per_model.items() if "k3" in k.lower() or "kimi" in k.lower())
@@ -364,9 +598,6 @@ def arch_analysis(runs, cards):
         res["kpi"]["ratio"] = res["k3_input_ratio"]
         res["kpi"]["status"] = ("alert" if res["k3_input_ratio"] >= ALERT_INPUT_RATIO
                                 else "warn" if res["k3_input_ratio"] >= KPI_INPUT_RATIO else "ok")
-    for m, pm in per_model.items():
-        if pm["n"] and pm["cost"] == 0:
-            res["cost_zeros"].append(m)
 
     # --- 离群（时长 / turns / input）---
     ends = [r for r in runs if r["has_end"]]
@@ -405,13 +636,21 @@ def arch_analysis(runs, cards):
 
 # ---------------------------------------------------------------- 建议与报告
 
-def build_suggestions(lessons_in, lessons_out, arch, n_agent_files=0):
-    sug = {"auto": [], "captain": [], "user": []}
-    for inst in lessons_in:
-        sug["auto"].append("[层1][{}] 已注入 {} 个 agent 文件：{}（conf={}）".format(
-            inst.get("id"), n_agent_files, inst.get("trigger"), inst.get("confidence")))
+def build_suggestions(lessons_in, lessons_out, arch, n_agent_files, mode, new_ids, pending, applied, drop_warnings):
+    sug = {"pending": [], "applied": [], "record": [], "captain": [], "user": []}
+    # 层 1：用户批准制（不再自动注入）
+    if mode == "apply":
+        for iid in applied:
+            sug["applied"].append("[层1][{}] 已批准注入（本次 apply 写入管理区，含备份+回读校验）".format(iid))
+        for iid in new_ids:
+            sug["pending"].append("[层1][{}] 本次运行新发现（{}），未获批准，仍留待注入清单".format(
+                iid, inst_trigger(lessons_in, iid)))
+    else:
+        for iid in pending:
+            sug["pending"].append("[层1][{}] conf={} 已列入待注入清单，未经批准未写入 agents：{}".format(
+                iid, conf_of(pending[iid]), inst_trigger(lessons_in, iid)))
     for inst in lessons_out:
-        sug["captain"].append("[层1][{}] confidence={} 低于 0.5 未注入，仅记录：{}".format(
+        sug["record"].append("[层1][{}] confidence={} 低于 0.5 未注入，仅记录：{}".format(
             inst.get("id"), inst.get("confidence"), inst.get("trigger")))
 
     kpi = arch["kpi"]
@@ -420,11 +659,17 @@ def build_suggestions(lessons_in, lessons_out, arch, n_agent_files=0):
     elif kpi["status"] == "warn":
         sug["captain"].append("[成本] K3(captain 系) 输入占比 {:.0%} 超 KPI 30%——建议审视可降档 flash 的任务".format(kpi["ratio"]))
     for m, pm in arch["models"].items():
-        sug["captain"].append("[成本] {}：{} 任务 / 总 input {} tok / 总 cost {} 元 / 均价 {:.2f} 元·任务 / 均时长 {:.0f}s".format(
-            m, pm["n"], pm["input"], round(pm["cost"], 4),
-            pm["cost"] / pm["n"] if pm["n"] else 0, pm["dur"] / pm["n"] if pm["n"] else 0))
-    for m in arch["cost_zeros"]:
-        sug["user"].append("[成本] 模型 {} 全部任务 costTotal=0——需用户确认计费口径（免费配额 or 漏记账）".format(m))
+        if pm.get("priced"):
+            sug["captain"].append("[成本] {}：{} 任务 / 总 input {} tok / 总 cost {} 元 / 均价 {:.2f} 元·任务 / 均时长 {:.0f}s（计价口径：models.json 已配置，可下成本结论）".format(
+                m, pm["n"], pm["input"], round(pm["cost"], 4),
+                pm["cost"] / pm["n"] if pm["n"] else 0, pm["dur"] / pm["n"] if pm["n"] else 0))
+        else:
+            note = pm.get("price_note") or ""
+            note_tail = "（models.json 注释：{}）".format(note) if note else ""
+            sug["user"].append("[成本] 模型 {}：{} 任务 / 总 input {} tok / 成本=未配置计价（0 为口径缺失非免费，不得当免费）——需用户在 models.json 配置实际单价{}".format(
+                m, pm["n"], pm["input"], note_tail))
+    for m in arch["zero_cost_priced"]:
+        sug["user"].append("[成本] 模型 {} 已配置计价但 costTotal=0——需用户确认计费口径（免费配额 or 漏记账）".format(m))
 
     for r in arch["outliers_dur"]:
         sug["captain"].append("[效率] 时长离群 {}：{}s（均值 {:.0f}s）——建议拆片或压缩上下文：{}".format(
@@ -433,7 +678,7 @@ def build_suggestions(lessons_in, lessons_out, arch, n_agent_files=0):
         sug["captain"].append("[效率] turns 离群 {}：{} turns——建议拆片/限定轮次上限：{}".format(
             r["runId"], r["usage"].get("turns", 0), r["summary"][:40]))
     if arch["max_concurrency"] >= 2:
-        sug["auto"].append("[效率] 并行利用率正常：检测到最大并发 {}（同 pid 重叠窗口）".format(arch["max_concurrency"]))
+        sug["captain"].append("[效率] 并行利用率正常：检测到最大并发 {}（同 pid 重叠窗口）".format(arch["max_concurrency"]))
 
     for (actor, domain), cell in sorted(arch["matrix"].items()):
         total = sum(cell.values())
@@ -449,19 +694,58 @@ def build_suggestions(lessons_in, lessons_out, arch, n_agent_files=0):
     return sug
 
 
-def render_report(lessons_in, lessons_out, arch, sug, dry, runs, cards):
+def inst_trigger(lessons_in, iid):
+    for i in lessons_in:
+        if str(i.get("id", "")).strip() == iid:
+            return str(i.get("trigger", ""))
+    return "?"
+
+
+def parse_line_meta(line):
+    """从管理区行解析 (conf, id, domain, lesson, trigger, evidence)。失败回退部分字段。"""
+    m = re.match(r"^\- \[([\d.]+)\]\[([^\]]+)\]\s+([^·]+)·(.*?)（trigger: (.*?)）— (.*?)，(\d{4}-\d{2}-\d{2})$", line)
+    if m:
+        return m.group(1), m.group(2), m.group(3).strip(), m.group(4), m.group(5), m.group(6)
+    c = re.search(r"\[([\d.]+)\]\[([^\]]+)\]", line)
+    return (c.group(1) if c else "?", c.group(2) if c else "?", "", "", "", "")
+
+
+def lesson_row(e):
+    """entry → 表格行（创建日期/id/conf/domain/trigger/evidence/拟注入角色）。"""
+    conf, iid, domain, _lesson, trig, ev = parse_line_meta(e["line"])
+    return [e["date"], iid, conf, domain, trig, ev, e["role"]]
+
+
+def render_report(mode, dry, lessons_in, lessons_out, arch, sug, runs, cards,
+                  pending, applied, archived, archived_ids, drop_warnings, injected_results, new_ids):
     L = []
     L.append("# self-optimize 报告（双层自优化器）\n")
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    mode_label = {"report": "report（只读分析+待注入清单，不写 agents）",
+                  "apply": "apply（已批准注入）"}.get(mode, mode)
+    if dry:
+        mode_label += " + dry（零写盘预览）"
+    L.append("> ⚠ **未经用户批准，本报告不产生任何文件改动**（agents/*.md 管理区仅在 `apply` 模式下写入）\n")
     L.append("> 生成时间：{} ｜ 模式：{} ｜ 输入：runs.jsonl {} 条运行 / 黑板结果卡 {} 张 / NAVIGATOR instinct {} 条".format(
-        now, "dry（未写盘）" if dry else "真跑", len(runs), len(cards), len(lessons_in) + len(lessons_out)))
-    L.append("\n## 层 1：样本自优化\n")
-    L.append("### 注入教训（confidence≥0.5，自动应用）——{} 条\n".format(len(lessons_in)))
-    L.append("| id | conf | domain | trigger | 注入文件 |")
-    L.append("|---|---|---|---|---|")
-    for inst in sorted(lessons_in, key=lambda x: -x.get("confidence", 0)):
-        L.append("| {} | {} | {} | {} | agents/*.md 全部 5 个 |".format(
-            inst.get("id"), inst.get("confidence"), inst.get("domain"), inst.get("trigger")))
+        now, mode_label, len(runs), len(cards), len(lessons_in) + len(lessons_out)))
+    L.append("\n## 层 1：样本自优化（用户批准制）\n")
+
+    L.append("### 待批准注入（confidence≥0.5，已列入待注入清单；未经批准不写 agents）——{} 条\n".format(len(pending)))
+    L.append("| 创建日期 | id | conf | domain | trigger | evidence | 拟注入角色 |")
+    L.append("|---|---|---|---|---|---|---|")
+    for iid in sorted(pending, key=lambda x: (-conf_of(pending[x]), x)):
+        L.append("| {} |".format(" | ".join(lesson_row(pending[iid]))))
+    if not pending:
+        L.append("| - | - | - | - | - | - | - |")
+
+    L.append("\n### 已批准注入（apply 后由待注入移入；NAVIGATOR 源删除即撤注）——{} 条\n".format(len(applied)))
+    L.append("| 创建日期 | id | conf | domain | trigger | evidence | 拟注入角色 |")
+    L.append("|---|---|---|---|---|---|---|")
+    for iid in sorted(applied, key=lambda x: (-conf_of(applied[x]), x)):
+        L.append("| {} |".format(" | ".join(lesson_row(applied[iid]))))
+    if not applied:
+        L.append("| - | - | - | - | - | - | - |")
+
     L.append("\n### 仅记录教训（confidence<0.5，未注入）——{} 条\n".format(len(lessons_out)))
     L.append("| id | conf | domain | trigger |")
     L.append("|---|---|---|---|")
@@ -469,15 +753,37 @@ def render_report(lessons_in, lessons_out, arch, sug, dry, runs, cards):
         L.append("| {} | {} | {} | {} |".format(
             inst.get("id"), inst.get("confidence"), inst.get("domain"), inst.get("trigger")))
 
+    if archived_ids or drop_warnings:
+        L.append("\n### 归档与撤注告警\n")
+        for iid in archived_ids:
+            L.append("- 已归档：{}（创建超 {} 天未批准，已移入归档区，不再出现在待注入清单）".format(iid, TTL_DAYS))
+        for w in drop_warnings:
+            L.append("- ⚠ 撤注告警：{}".format(w))
+        if archived:
+            L.append("- 归档区现存 {} 条（明细见 pending-injections.md 归档区）".format(len(archived)))
+
+    if injected_results:
+        L.append("\n### 本次 apply 注入结果（写前 .bak 备份 + 写后回读校验）\n")
+        L.append("| 文件 | 结果 |")
+        L.append("|---|---|")
+        for fname, action in injected_results:
+            L.append("| {} | {} |".format(fname, action))
+
     L.append("\n## 层 2：架构运行分析（只读，只出建议）\n")
-    L.append("### 成本架构\n")
-    L.append("| model | 任务数 | 总 input(tok) | 总 output(tok) | 总 cost(元) | 均价/任务(元) | 总时长(s) | 均 turns |")
+    L.append("### 成本架构（口径：仅已计价模型计真实成本；未计价模型 0 为口径缺失非免费）\n")
+    L.append("| model | 任务数 | 总 input(tok) | 总 output(tok) | 总 cost(元) | 计价口径 | 均时长(s) | 均 turns |")
     L.append("|---|---|---|---|---|---|---|---|")
     for m, pm in sorted(arch["models"].items()):
-        L.append("| {} | {} | {} | {} | {:.4f} | {:.2f} | {:.0f} | {:.0f} |".format(
-            m, pm["n"], pm["input"], pm["output"], pm["cost"],
-            pm["cost"] / pm["n"] if pm["n"] else 0, pm["dur"], pm["turns"] / pm["n"] if pm["n"] else 0))
-    L.append("\n- **captain(K3系) 输入占比**：{:.1%}（KPI ≤30% / 告警 ≥50%）→ {}".format(
+        if pm.get("priced"):
+            cost_cell = "{:.4f}".format(pm["cost"])
+            priced_cell = "已计价"
+        else:
+            cost_cell = UNPRICED_LABEL
+            priced_cell = "未配置计价" + ("（占位待核价）" if pm.get("price_note") else "")
+        L.append("| {} | {} | {} | {} | {} | {} | {:.0f} | {:.0f} |".format(
+            m, pm["n"], pm["input"], pm["output"], cost_cell, priced_cell,
+            pm["dur"], pm["turns"] / pm["n"] if pm["n"] else 0))
+    L.append("\n- **captain(K3系) 输入占比**：{:.1%}（KPI ≤30% / 告警 ≥50%）→ {}（口径：token 占比，计价无关；金额类成本结论仅覆盖已计价模型）".format(
         arch["k3_input_ratio"],
         {"ok": "达标", "warn": "超 KPI，需 captain 关注", "alert": "超告警线，需立即处理"}[arch["kpi"]["status"]]))
     L.append("- 离群任务（input/turns/时长）：")
@@ -521,8 +827,14 @@ def render_report(lessons_in, lessons_out, arch, sug, dry, runs, cards):
         L.append("- blocked/handoff：无")
 
     L.append("\n## 建议分级\n")
-    L.append("### 【自动应用-已做】")
-    for s in sug["auto"]:
+    L.append("### 【待批准注入】（层 1 ≥0.5；需用户批准后 apply）")
+    for s in sug["pending"]:
+        L.append("- " + s)
+    L.append("\n### 【本次已注入 / 已批准】（apply 模式）")
+    for s in sug["applied"]:
+        L.append("- " + s)
+    L.append("\n### 【仅记录教训】（<0.5）")
+    for s in sug["record"]:
         L.append("- " + s)
     L.append("\n### 【需 captain 裁决】")
     for s in sug["captain"]:
@@ -530,27 +842,37 @@ def render_report(lessons_in, lessons_out, arch, sug, dry, runs, cards):
     L.append("\n### 【需用户裁决】")
     for s in sug["user"]:
         L.append("- " + s)
-    L.append("\n---\n请 captain 抽查管理区+裁决层 2 建议\n")
+    L.append("\n---\n请 captain 抽查管理区+裁决层 2 建议；待注入清单见 pending-injections.md\n")
     return "\n".join(L)
 
 
 # ---------------------------------------------------------------- main
 
 def main():
-    ap = argparse.ArgumentParser(description="pi-moa 双层自优化器")
-    ap.add_argument("--dry", action="store_true", help="只打印不写任何文件")
+    ap = argparse.ArgumentParser(description="pi-moa 双层自优化器（用户批准制：默认只读，apply 才写 agents）")
+    ap.add_argument("mode", nargs="?", default="report", choices=["report", "apply"],
+                    help="report=只读分析+报告+待注入清单（默认，永不写 agents/*.md）；apply=仅用户明确批准后执行注入（写前 .bak 备份+写后回读校验）")
+    ap.add_argument("--dry", action="store_true", help="零写盘：只打印报告与清单预览")
     ap.add_argument("--agents-dir", default=str(DEFAULT_AGENTS))
     ap.add_argument("--navigator", default=str(DEFAULT_NAVIGATOR))
     ap.add_argument("--runs", default=str(DEFAULT_RUNS))
     ap.add_argument("--blackboard", default=str(DEFAULT_BLACKBOARD))
     ap.add_argument("--report", default=str(DEFAULT_REPORT))
+    ap.add_argument("--pending", default=str(DEFAULT_PENDING))
+    ap.add_argument("--models-json", default=str(DEFAULT_MODELS_JSON))
     args = ap.parse_args()
+
+    mode = args.mode
+    dry = args.dry
+    do_write = (mode == "apply") and not dry  # 只有 apply 且非 dry 才写 agents 管理区
 
     agents_dir = Path(args.agents_dir)
     navigator_path = Path(args.navigator)
     runs_path = Path(args.runs)
     blackboard_root = Path(args.blackboard)
     report_path = Path(args.report)
+    pending_path = Path(args.pending)
+    models_json_path = Path(args.models_json)
 
     # 输入读取
     nav_text = navigator_path.read_text(encoding="utf-8") if navigator_path.exists() else ""
@@ -558,22 +880,72 @@ def main():
     lessons_in = [i for i in instincts if float(i.get("confidence", 0.3)) >= THRESHOLD]
     lessons_out = [i for i in instincts if float(i.get("confidence", 0.3)) < THRESHOLD]
 
+    # 待注入清单：读旧 → TTL 归档 → 并入 NAVIGATOR 教训
+    sections = {"pending": {}, "applied": {}, "archived": {}}
+    pending_existed = pending_path.exists()
+    if pending_existed:
+        sections = parse_pending(pending_path.read_text(encoding="utf-8"))
+    pending, applied, archived = sections["pending"], sections["applied"], sections["archived"]
+    today_iso = datetime.date.today().isoformat()
+    archived_ids = apply_ttl(pending, archived)
+    new_ids, dropped_ids = merge_into_pending(lessons_in, pending, applied, archived, today_iso)
+    if not pending_existed:
+        # 首次运行（无历史清单）：本次 apply 视为对当前清单的全量批准，new_ids 不排除
+        new_ids = []
+
+    drop_warnings = []
+    for iid in dropped_ids:
+        drop_warnings.append("已批准注入的教训 {} 的 NAVIGATOR 源已删除——已移出已批准区，下次 apply 将从管理区移除".format(iid))
+
+    # 层 2
     runs = load_runs(runs_path)
     cards = scan_result_cards(blackboard_root)
-    arch = arch_analysis(runs, cards)
+    pricing = load_pricing(models_json_path)
+    arch = arch_analysis(runs, cards, pricing)
     n_agent_files = len(list(agents_dir.glob("*.md"))) if agents_dir.exists() else 0
-    sug = build_suggestions(lessons_in, lessons_out, arch, n_agent_files)
-    report = render_report(lessons_in, lessons_out, arch, sug, args.dry, runs, cards)
 
-    # 层 1 写管理区
-    if lessons_in:
+    # apply：注入管理区（写前备份 + 写后回读校验 + 失败恢复）
+    injected_results = []
+    failed = False
+    if do_write:
+        zone_entries = [e for iid, e in list(pending.items()) + list(applied.items()) if iid not in new_ids]
+        zone_entries.sort(key=lambda e: (-conf_of(e), id_of(e)))
+        zone_lines = [e["line"] for e in zone_entries]
+        zone_ids = {id_of(e) for e in zone_entries}
+        old_ids = existing_zone_ids(agents_dir)
+        for gone in sorted(old_ids - zone_ids):
+            drop_warnings.append("管理区现有教训 {} 不在待注入/已批准清单——本次 apply 将从管理区撤注（非静默，特此告警）".format(gone))
         for f in sorted(agents_dir.glob("*.md")):
-            changed, action = inject_into_file(f, lessons_in, args.dry)
-            if changed:
-                print("[层1] {} → {} (dry)" .format(f.name, action) if args.dry else "[层1] {} → {}".format(f.name, action))
+            changed, action = inject_into_file(f, zone_lines, True)
+            injected_results.append((f.name, action))
+            if "verify-failed" in action or "write-failed" in action:
+                failed = True
+                print("[层1][错误] {} → {}（已自动从 .bak 恢复）".format(f.name, action))
+            elif changed:
+                print("[层1] {} → {}（.bak 备份+回读校验通过）".format(f.name, action))
+        # 注入成功的待注入条目 → 已批准
+        for iid in list(pending.keys()):
+            if iid not in new_ids:
+                e = pending.pop(iid)
+                e["status"] = "applied"
+                applied[iid] = e
 
-    # 写报告
-    if args.dry:
+    # 待注入清单落盘（report/apply 都写；--dry 不写）
+    pending_text = render_pending(pending, applied, archived, drop_warnings)
+    if dry:
+        print("\n[dry] 未写 pending-injections.md；预览（前 12 行）：\n")
+        print("\n".join(pending_text.splitlines()[:12]))
+    else:
+        pending_path.parent.mkdir(parents=True, exist_ok=True)
+        pending_path.write_text(pending_text, encoding="utf-8")
+        print("[清单] 已写 {}".format(pending_path))
+
+    sug = build_suggestions(lessons_in, lessons_out, arch, n_agent_files, mode, new_ids, pending, applied, drop_warnings)
+    report = render_report(mode, dry, lessons_in, lessons_out, arch, sug, runs, cards,
+                           pending, applied, archived, archived_ids, drop_warnings, injected_results, new_ids)
+
+    # 报告落盘（--dry 只预览）
+    if dry:
         print("\n[dry] 未写报告；以下为将写入 {} 的内容预览（前 60 行）：\n".format(report_path))
         print("\n".join(report.splitlines()[:60]))
     else:
@@ -583,18 +955,32 @@ def main():
 
     # stdout 摘要
     print("\n===== stdout 摘要 =====")
-    print("层1：instinct {} 条 → 注入 {} 条（≥0.5，{} 个 agent 文件）/ 仅记录 {} 条".format(
-        len(instincts), len(lessons_in), len(list(agents_dir.glob('*.md'))) if agents_dir.exists() else 0, len(lessons_out)))
+    print("模式：{}（{}）——{}".format(mode, "dry 零写盘" if dry else "写报告+清单", 
+          "写 agents 管理区" if do_write else "不写 agents（用户批准制）"))
+    print("层1：instinct {} 条 → 待批准 {} 条 / 已批准 {} 条 / 仅记录 {} 条 / 归档 {} 条 / 撤注告警 {} 条".format(
+        len(instincts), len(pending), len(applied), len(lessons_out), len(archived_ids), len(drop_warnings)))
+    for w in drop_warnings:
+        print("  ⚠ " + w)
     print("层2：runs {} 条（{} 完成）；K3 输入占比 {:.1%}（KPI≤30%/告警50%）；最大并发 {}；时长离群 {} 条；turns 离群 {} 条；blocked/handoff 点 {} 个".format(
         len(runs), sum(1 for r in runs if r["has_end"]), arch["k3_input_ratio"],
         arch["max_concurrency"], len(arch["outliers_dur"]), len(arch["outliers_turns"]), len(arch["blocked_points"])))
     for m, pm in sorted(arch["models"].items()):
-        print("  模型 {}: {} 任务 / {} tok / {:.4f} 元 / {:.0f}s".format(
-            m, pm["n"], pm["input"], pm["cost"], pm["dur"]))
-    print("建议：自动应用 {} 条 / captain 裁决 {} 条 / 用户裁决 {} 条".format(
-        len(sug["auto"]), len(sug["captain"]), len(sug["user"])))
-    if not args.dry:
-        print("\n请 captain 抽查管理区+裁决层 2 建议")
+        if pm.get("priced"):
+            print("  模型 {}: {} 任务 / {} tok / {:.4f} 元 / {:.0f}s（已计价）".format(
+                m, pm["n"], pm["input"], pm["cost"], pm["dur"]))
+        else:
+            print("  模型 {}: {} 任务 / {} tok / 成本=未配置计价（0 为口径缺失非免费）".format(
+                m, pm["n"], pm["input"]))
+    print("建议：待批准注入 {} 条 / 已注入 {} 条 / 仅记录 {} 条 / captain 裁决 {} 条 / 用户裁决 {} 条".format(
+        len(sug["pending"]), len(sug["applied"]), len(sug["record"]), len(sug["captain"]), len(sug["user"])))
+    if dry:
+        print("\n[dry] 零文件改动完成（不含 agents 管理区）")
+    elif not do_write:
+        print("\n请用户批准后执行 `python3 self-optimize.py apply`（或 /moa optimize apply）写入管理区")
+    else:
+        print("\n已按批准注入 agents 管理区（.bak 备份 + 回读校验）；请 captain 抽查")
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

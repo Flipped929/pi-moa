@@ -7,6 +7,10 @@
  *   /moa off     关闭，回到主模型单干
  *   /moa status  开关状态 + 角色在线检查 + 任务记录统计
  *   /moa review <主题>  多模型多角色多 agent 多轮联合评审，优化至零可执行状态（可利用优质 agent skills，find skills）
+ *   /moa optimize [apply|dry]  双层自优化（用户批准制 2026-08-06）：
+ *     - /moa optimize        = 只读分析 + 待注入清单（pending-injections.md），永不写 agents/*.md
+ *     - /moa optimize apply  = 执行注入（写前 .bak 备份 + 写后回读校验）——仅用户明确说“批准/apply”后调用
+ *     - /moa optimize dry    = 零写盘预览
  *
  * 机制：
  * - on 状态下通过 before_agent_start 向系统提示注入调度规则（仅主会话，子代理进程自动跳过）
@@ -338,13 +342,22 @@ export default function (pi: ExtensionAPI) {
 			}
 			case "optimize": {
 				if (isSubagent()) { ctx.ui.notify("子代理进程内不可用", "warning"); return; }
+				// 用户批准制（2026-08-06 用户裁决）：/moa optimize 只读分析+待注入清单，永不写 agents/*.md；
+				// 仅当用户明确说“批准/apply”后，才用 /moa optimize apply 执行注入（写前 .bak 备份 + 写后回读校验）。
+				const apply = rest.includes("apply");
 				const dry = rest.includes("dry") || rest.includes("--dry");
 				const script = path.join(process.env.HOME ?? "", ".pi/agent/moa/self-optimize.py");
 				if (!fs.existsSync(script)) { ctx.ui.notify("self-optimize.py 不存在（先派 OPT 切片构建）", "error"); return; }
 				try {
-					const out = execFileSync("python3", dry ? [script, "--dry"] : [script], { encoding: "utf-8", timeout: 120_000 });
+					const args = apply ? [script, "apply"] : dry ? [script, "--dry"] : [script];
+					const out = execFileSync("python3", args, { encoding: "utf-8", timeout: 120_000 });
 					const summary = out.trim().split("\n").slice(-18).join("\n");
-					ctx.ui.notify(`🧬 自优化${dry ? "（dry-run）" : ""}完成\n${summary}`, "info");
+					const tag = apply
+						? "（apply：已批准注入 agents 管理区，含 .bak 备份+回读校验）"
+						: dry
+							? "（dry：零写盘）"
+							: "（report：只读分析+待注入清单，不写 agents）";
+					ctx.ui.notify(`🧬 自优化${tag}\n${summary}`, "info");
 				} catch (e: any) {
 					ctx.ui.notify(`自优化执行失败：${String(e?.message ?? e).split("\n")[0]}`, "error");
 				}
@@ -363,12 +376,12 @@ export default function (pi: ExtensionAPI) {
 				break;
 			}
 			default:
-				ctx.ui.notify("用法：/moa on|off|status|review <主题>|optimize [dry]（快捷：/moa-on /moa-off /moa-status /moa-review /moa-optimize）", "warning");
+				ctx.ui.notify("用法：/moa on|off|status|review <主题>|optimize [apply|dry]（快捷：/moa-on /moa-off /moa-status /moa-review /moa-optimize）", "warning");
 		}
 	}
 
 	pi.registerCommand("moa", {
-		description: "pi-moa 多模型协同：/moa on|off|status|review <主题>|optimize [dry]（optimize=双层自优化：样本注入+架构分析）",
+		description: "pi-moa 多模型协同：/moa on|off|status|review <主题>|optimize [apply|dry]（optimize=只读分析+待注入清单，永不写 agents；optimize apply=仅用户明确批准后注入管理区）",
 		handler: async (args, ctx) => {
 			const [sub, ...rest] = (args ?? "").trim().split(/\s+/);
 			await handle(sub ?? "", rest, ctx);
@@ -377,7 +390,7 @@ export default function (pi: ExtensionAPI) {
 
 	// 快捷别名命令
 	pi.registerCommand("moa-optimize", {
-		description: "pi-moa：双层自优化（= /moa optimize [dry]）——试错样本注入角色管理区+架构运行分析",
+		description: "pi-moa：双层自优化（= /moa optimize [apply|dry]）——report=只读分析+待注入清单（不写 agents）；apply=仅用户明确批准后注入角色管理区（含备份+回读校验）",
 		handler: async (args, ctx) => handle("optimize", (args ?? "").trim().split(/\s+/), ctx),
 	});
 	pi.registerCommand("moa-on", {
