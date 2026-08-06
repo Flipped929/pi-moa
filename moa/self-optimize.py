@@ -27,8 +27,19 @@ from pathlib import Path
 HOME = Path.home()
 DEFAULT_AGENTS = HOME / ".pi" / "agent" / "agents"
 DEFAULT_RUNS = HOME / ".pi" / "agent" / "moa" / "runs.jsonl"
-DEFAULT_NAVIGATOR = HOME / "MLK-V2.0" / "30-软件工程组" / "08-企业AI工作台" / ".pi" / "moa" / "NAVIGATOR.md"
-DEFAULT_BLACKBOARD = HOME / "MLK-V2.0" / "30-软件工程组" / "08-企业AI工作台" / ".pi" / "moa"
+# 黑板根默认自动发现：环境变量 PI_MOA_BOARD > 常见项目位置 > 当前目录
+def _discover_board() -> Path:
+    import os
+    if os.environ.get("PI_MOA_BOARD"):
+        return Path(os.environ["PI_MOA_BOARD"])
+    for base in (Path.cwd(), HOME):
+        cand = base / ".pi" / "moa"
+        if cand.is_dir():
+            return cand
+    return HOME / ".pi" / "agent" / "moa"  # 兜底（无黑板时各扫描器优雅跳过）
+
+DEFAULT_BLACKBOARD = _discover_board()
+DEFAULT_NAVIGATOR = DEFAULT_BLACKBOARD / "NAVIGATOR.md"
 DEFAULT_REPORT = HOME / ".pi" / "agent" / "moa" / "self-optimize-report.md"
 
 BEGIN = "<!-- MOA-LESSONS:BEGIN（self-optimize.py 管理区，勿手改；块外零改动） -->"
