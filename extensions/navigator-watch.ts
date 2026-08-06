@@ -1,6 +1,6 @@
 /**
  * navigator-watch — pi-moa 任务记录纪律的结构性强制（Navigator 实体 · 源头保证）
- * @version v1.1-2026-08-05（Phase 1a：turn_end 结果卡 status 校验，提醒档不 block）
+ * @version v1.2-2026-08-06（Phase 1a：turn_end 结果卡 status 校验，提醒档不 block；Option C 全文+行锚定+枚举）
  *
  * 解决的问题：任务记录落盘此前只靠提示词自觉（已发生漏记），navigator 只是约定无实体。
  *
@@ -113,8 +113,10 @@ export default function (pi: ExtensionAPI) {
 			if (base.startsWith("P") && base.includes("-")) { /* prompts/ 目录文件名也类似，靠目录区分 */ }
 			if (!f.includes("/results/") && !f.includes("/handoffs/")) return false;
 			try {
-				const head = fs.readFileSync(f, "utf-8").slice(0, 600);
-				return !/status\s*[:：]/.test(head);
+				// Option C（2026-08-06 captain 裁决）：全文扫描 + 行锚定 + 枚举校验，
+				// 治 600 字符窗口脆弱性，同时抓"有 status 但值非法"的真问题
+				const text = fs.readFileSync(f, "utf-8");
+				return !/^[\s>*\-]*status\s*[:：]\s*(done|partial|blocked|handoff)\b/im.test(text);
 			} catch {
 				return false;
 			}
@@ -210,10 +212,12 @@ export default function (pi: ExtensionAPI) {
 			alerts.push(msg);
 		}
 		// 告警送达 captain（用户裁决：popup 可能看不到，captain 必须知情并处置）
+		// 附时间戳+指纹：队列延迟送达时可识别陈旧告警（已发生 2 次）
 		if (alerts.length) {
 			try {
+				const fp = alerts.join("|").length + "-" + (turnCount % 1000);
 				pi.sendUserMessage(
-					`[Navigator 告警·需 captain 处置]\n${alerts.join("\n")}`,
+					`[Navigator 告警·需 captain 处置][生成于 ${new Date().toISOString().slice(0, 16).replace("T", " ")} fp:${fp}]\n${alerts.join("\n")}`,
 					{ deliverAs: "followUp" },
 				);
 			} catch { /* 注入失败不影响主流程 */ }
