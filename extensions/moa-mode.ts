@@ -18,6 +18,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ── /moa status 数据层（三层：调度 captain/监测审计 Navigator/执行子模型）
@@ -166,6 +167,16 @@ const ORCHESTRATION_RULES = `
    - 写作类 → 1 个 executor 起草 + 1 个 critic 挑刺 → 你定稿
    - 拿不准：先派 1 个 analyst 探测再定
 3. 纪律：并行子代理≤3；executor 返回 blocked/handoff 时你从 handoff 包断点接手；图片/视觉步骤永远你自己做（子模型纯文本）。
+   【captain 成本纪律（2026-08-06 用户裁决：质量/效率/性价比三轴）】
+   - 派卡不读原文：任务卡所需背景材料先派 analyst 出 ≤300字摘要，你只读摘要写卡（安全/密钥/凭证切片除外）；禁止为写卡读全量文件
+   - 工具输出截断：docker logs/SQL/长文件只取关键行（tail/grep/offset 前置）；子模型结果卡超过 300字部分只扫 concerns
+   - 胶水活下放：DEVLOG 起草/黑板收集/验证报告/种子执行回报全派 flash，你只签字合并
+   - 批次收尾即 compact 会话：任务记录是记忆体，会话不背历史包袱
+   - 性价比 KPI：captain 输入占比目标 ≤30%（告警线 50%），flash 任务覆盖率 ≥80%
+   【自优化循环（用户裁决 2026-08-06：试错样本要自优化）】
+   - 每个样本（任务结果/误判/高频坑）→ 沉淀为 instinct YAML（navigator-report 已产）
+   - confidence≥0.5 的教训由自优化脚本自动维护进角色定义「已知坑」管理区（agents/*.md），携带 evidence+日期；你不定期抽查管理区内容（防错误教训固化，confidence<0.5 不注入）
+   - 调度档位表每 10 任务按台账校准一次；任务卡模板每轮新坑出现后即补必填字段
    【captain 工作量浮动制（用户裁决 2026-08-06）】你认领最难切片，工作量按子代理信用度在 **20%-40% 浮动**：信用度高（台账近期 done 率高、误判事件少）→ 靠 20%（最轻插手+抽查下限）；信用度低或该领域无样本 → 靠 40%（加强亲执与复核）。信用度依据：NAVIGATOR 角色可信度表 + runs.jsonl 台账 + 误判事件记录，每批次开始时你明读一次并在任务卡写下本次浮动档位与理由。
    【治理档位静态查表（Phase 3，用户裁决：绕过小样本统计噪声，用先验画像而非后验统计）】
    - 任务含 {SQL/脱敏/密钥/部署/安全/凭证} 关键词 或 risk≥中 → 关键路径升 K3（executor-k3 或你亲审）
@@ -325,6 +336,20 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(L.join("\n"), "info");
 				break;
 			}
+			case "optimize": {
+				if (isSubagent()) { ctx.ui.notify("子代理进程内不可用", "warning"); return; }
+				const dry = rest.includes("dry") || rest.includes("--dry");
+				const script = path.join(process.env.HOME ?? "", ".pi/agent/moa/self-optimize.py");
+				if (!fs.existsSync(script)) { ctx.ui.notify("self-optimize.py 不存在（先派 OPT 切片构建）", "error"); return; }
+				try {
+					const out = execFileSync("python3", dry ? [script, "--dry"] : [script], { encoding: "utf-8", timeout: 120_000 });
+					const summary = out.trim().split("\n").slice(-18).join("\n");
+					ctx.ui.notify(`🧬 自优化${dry ? "（dry-run）" : ""}完成\n${summary}`, "info");
+				} catch (e: any) {
+					ctx.ui.notify(`自优化执行失败：${String(e?.message ?? e).split("\n")[0]}`, "error");
+				}
+				break;
+			}
 			case "review": {
 				const topic = rest.join(" ").trim();
 				if (!topic) {
@@ -343,7 +368,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerCommand("moa", {
-		description: "pi-moa 多模型协同：/moa on|off|status|review <主题>（review=多模型多角色多agent多轮联合评审至零可执行，可利用优质 agent skills，find skills）",
+		description: "pi-moa 多模型协同：/moa on|off|status|review <主题>|optimize [dry]（optimize=双层自优化：样本注入+架构分析）",
 		handler: async (args, ctx) => {
 			const [sub, ...rest] = (args ?? "").trim().split(/\s+/);
 			await handle(sub ?? "", rest, ctx);
