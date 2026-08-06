@@ -194,21 +194,29 @@ export default function (pi: ExtensionAPI) {
 		if (!boardRoot || turnCount % 5 !== 0) return;
 		runReport(boardRoot);
 		// Phase 1a：handoff/status 校验（提醒档，不 block）
+		const alerts: string[] = [];
 		const noStatus = findCardsMissingStatus(boardRoot).filter((f) => !notifiedNoStatus.has(f));
 		if (noStatus.length) {
 			noStatus.forEach((f) => notifiedNoStatus.add(f));
-			ctx.ui.notify(
-				`🧭 navigator：${noStatus.length} 张结果卡缺 status 字段（${noStatus.map((f) => path.basename(f)).join(", ")}）——handoff 三档化提醒档，请补全或说明`,
-				"warning",
-			);
+			const msg = `🧭 navigator：${noStatus.length} 张结果卡缺 status 字段（${noStatus.map((f) => path.basename(f)).join(", ")}）——handoff 三档化提醒档，请补全或说明`;
+			ctx.ui.notify(msg, "warning");
+			alerts.push(msg);
 		}
 		const missing = reconcile(boardRoot).filter((h) => !notifiedMissing.has(h));
 		if (missing.length) {
 			missing.forEach((h) => notifiedMissing.add(h));
-			ctx.ui.notify(
-				`🧭 navigator：检测到 ${missing.length} 笔 commit 无任务记录（${missing.join(", ")}）——请补记 .pi/moa 任务卡`,
-				"warning",
-			);
+			const msg = `🧭 navigator：检测到 ${missing.length} 笔 commit 无任务记录（${missing.join(", ")}）——请补记 .pi/moa 任务卡`;
+			ctx.ui.notify(msg, "warning");
+			alerts.push(msg);
+		}
+		// 告警送达 captain（用户裁决：popup 可能看不到，captain 必须知情并处置）
+		if (alerts.length) {
+			try {
+				pi.sendUserMessage(
+					`[Navigator 告警·需 captain 处置]\n${alerts.join("\n")}`,
+					{ deliverAs: "followUp" },
+				);
+			} catch { /* 注入失败不影响主流程 */ }
 		}
 		// 状态落盘：供 /moa status「Navigator·监测审计」层读取
 		try {
