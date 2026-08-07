@@ -78,6 +78,7 @@ function logLedgerEnd(
 	summary: string,
 	exitCode: number,
 	usage: { input: number; output: number; cost: number; turns: number },
+	verdict: string,
 ): void {
 	ledgerAppend({
 		event: "end",
@@ -86,9 +87,55 @@ function logLedgerEnd(
 		agent,
 		model: model ?? null,
 		summary,
+		verdict,
 		exitCode,
 		usage: { input: usage.input, output: usage.output, costTotal: usage.cost, turns: usage.turns },
 	});
+}
+
+// ── verdict 提取（end 台账结构化字段；供 08-21 R2 门禁/self-optimize 层2 verdict 分布取数）──
+// 词汇归一化：pass/pass_with_notes/fail/conditional/disagree → 保留原值小写；reject/revise → fail；无匹配 → unknown
+// 提取顺序（防漏提/防误猜）：
+//   1) 行锚定 verdict 行 ^\s*verdict\s*[:：]（R1-critic: 历史卡有 `## verdict:`/`- verdict: **fail**` 等变体，
+//      非行锚定一律不匹配——宁可 unknown 不误提）；值可带 markdown 强调/括注/复合句（"; 方案级仍 fail"），取首个已知词
+//   2) 无 verdict 行 → status 行推断：status:done 且无 verdict → unknown（不得从 done 猜 pass）；
+//      partial/blocked/handoff 或无 status → 同样 unknown（无推断依据，不猜）
+const VERDICT_NORMALIZE: Record<string, string> = {
+	pass: "pass",
+	pass_with_notes: "pass_with_notes",
+	fail: "fail",
+	conditional: "conditional",
+	disagree: "disagree",
+	reject: "fail",
+	revise: "fail",
+};
+// 匹配顺序即优先级：长词在前（pass_with_notes 先于 pass），同位置取先者
+const VERDICT_KEYWORDS = ["pass_with_notes", "conditional", "disagree", "pass", "fail", "reject", "revise"];
+
+function normalizeVerdictWord(raw: string): string {
+	// 只去 markdown 星号/反引号强调；下划线保留（pass_with_notes 是枚举词的一部分，删了会匹配失败）
+	const lower = raw.toLowerCase().replace(/[*`]/g, "");
+	let best: { word: string; idx: number } | null = null;
+	for (const w of VERDICT_KEYWORDS) {
+		const idx = lower.indexOf(w);
+		if (idx >= 0 && (best === null || idx < best.idx)) best = { word: w, idx };
+	}
+	return best ? (VERDICT_NORMALIZE[best.word] ?? "unknown") : "unknown";
+}
+
+/** 从子代理返回文本提取 verdict（导出供测试） */
+export function extractVerdict(output: string): string {
+	const lines = (output ?? "").split("\n");
+	// 1) 行锚定 verdict 行（^\s*verdict\s*[:：]；\s 不含列表符 `-`/标题 `##`，
+	//    此类前缀变体不匹配 → 归入 unknown 漏提兜底——宁可 unknown 不误提，R1-critic 历史格式清单已知此取舍）
+	for (const line of lines) {
+		const m = /^\s*verdict\s*[:：]\s*(.+)$/i.exec(line);
+		if (!m) continue;
+		const v = normalizeVerdictWord(m[1].trim());
+		if (v !== "unknown") return v;
+	}
+	// 2) 无 verdict 行 → status 推断：status:done 且无 verdict → unknown（不得猜）；其余同样 unknown
+	return "unknown";
 }
 
 function formatTokens(count: number): string {
@@ -493,8 +540,9 @@ async function runSingleAgent(
 			} catch {
 				/* ignore */
 			}
-		// MoA 台账：运行结束写 end 记录（含 exitCode 与 usage 汇总）
-		logLedgerEnd(runId, agentName, currentResult.model ?? agent.model, summaryText, currentResult.exitCode, currentResult.usage);
+		// MoA 台账：运行结束写 end 记录（含 exitCode、usage 汇总与结构化 verdict）
+		const verdict = extractVerdict(getResultOutput(currentResult));
+		logLedgerEnd(runId, agentName, currentResult.model ?? agent.model, summaryText, currentResult.exitCode, currentResult.usage, verdict);
 	}
 }
 

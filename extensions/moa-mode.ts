@@ -48,6 +48,7 @@ interface LedgerEnd {
 	agent: string;
 	model: string | null;
 	summary: string;
+	verdict?: string;
 	exitCode: number;
 	usage: { input: number; output: number; costTotal: number; turns: number };
 }
@@ -126,6 +127,20 @@ function readNavigatorState(boardBase: string): string {
 }
 
 
+/** 台账在跑子模型 → 进度上下文行（未配对 start 且 pid 存活）；无在跑返回 null。导出供测试 */
+export function runningSubagentsLine(): string | null {
+	const { starts, ends } = readLedger();
+	if (starts.length === 0) return null;
+	const endByRunId = new Set(ends.map((e) => e.runId));
+	const running = starts.filter((s) => !endByRunId.has(s.runId) && isPidAlive(s.pid));
+	if (running.length === 0) return null;
+	const parts = running.map(
+		(r) => `${r.agent}@${(r.model ?? "default").split("/").pop()}·${r.summary}·已跑${fmtDur(Date.now() - r.ts)}`,
+	);
+	return `[pi-moa 进度] 当前有 ${running.length} 个子模型在跑（${parts.join("；")}），用户可通过 /moa status 查看详情`;
+}
+
+
 const AGENTS = ["executor", "executor-k3", "analyst", "critic", "devil"] as const;
 
 const REVIEW_PROMPT = (topic: string) =>
@@ -171,22 +186,10 @@ const ORCHESTRATION_RULES = `
    - 写作类 → 1 个 executor 起草 + 1 个 critic 挑刺 → 你定稿
    - 拿不准：先派 1 个 analyst 探测再定
 3. 纪律：并行子代理≤3；executor 返回 blocked/handoff 时你从 handoff 包断点接手；图片/视觉步骤永远你自己做（子模型纯文本）。
-   【captain 成本纪律（2026-08-06 用户裁决：质量/效率/性价比三轴）】
-   - 派卡不读原文：任务卡所需背景材料先派 analyst 出 ≤300字摘要，你只读摘要写卡（安全/密钥/凭证切片除外）；禁止为写卡读全量文件
-   - 工具输出截断：docker logs/SQL/长文件只取关键行（tail/grep/offset 前置）；子模型结果卡超过 300字部分只扫 concerns
-   - 胶水活下放：DEVLOG 起草/黑板收集/验证报告/种子执行回报全派 flash，你只签字合并
-   - 批次收尾即 compact 会话：任务记录是记忆体，会话不背历史包袱
-   - 性价比 KPI：captain 输入占比目标 ≤30%（告警线 50%），flash 任务覆盖率 ≥80%
-   【自优化循环（用户裁决 2026-08-06：试错样本要自优化）】
-   - 每个样本（任务结果/误判/高频坑）→ 沉淀为 instinct YAML（navigator-report 已产）
-   - confidence≥0.5 的教训由自优化脚本自动维护进角色定义「已知坑」管理区（agents/*.md），携带 evidence+日期；你不定期抽查管理区内容（防错误教训固化，confidence<0.5 不注入）
-   - 调度档位表每 10 任务按台账校准一次；任务卡模板每轮新坑出现后即补必填字段
-   【captain 工作量浮动制（用户裁决 2026-08-06）】你认领最难切片，工作量按子代理信用度在 **20%-40% 浮动**：信用度高（台账近期 done 率高、误判事件少）→ 靠 20%（最轻插手+抽查下限）；信用度低或该领域无样本 → 靠 40%（加强亲执与复核）。信用度依据：NAVIGATOR 角色可信度表 + runs.jsonl 台账 + 误判事件记录，每批次开始时你明读一次并在任务卡写下本次浮动档位与理由。
-   【治理档位静态查表（Phase 3，用户裁决：绕过小样本统计噪声，用先验画像而非后验统计）】
-   - 任务含 {SQL/脱敏/密钥/部署/安全/凭证} 关键词 或 risk≥中 → 关键路径升 K3（executor-k3 或你亲审）
-   - item_count≥50 或 context text_length≥20k → 升 K3
-   - 低风险机械类（纯格式/字段映射/照抄规范页）→ flash 单跑可免 critic（在任务卡注明理由）
-   - blocked 率仅在样本 n≥3 时允许回写校准档位；台账（runs.jsonl）每 10 个任务回顾一次档位准确性并调整本表
+   【成本与档位（K3 是最贵资源）】机械类（格式/字段映射/照规范页）flash 单跑免 critic（任务卡注明理由）；含{SQL/脱敏/密钥/部署/安全/凭证}或大体量（≥50项/≥20k字）→升 K3；胶水活（DEVLOG 起草/黑板收集/验证报告）全派 flash 你只签字；派卡不读原文（analyst 摘要先行，安全/密钥切片除外）；工具输出截断取关键行；批次收尾即 compact。你的工作量按子代理信用度 20%-40% 浮动（批次开始在任务卡注明档位与理由；依据=NAVIGATOR 可信度+runs.jsonl 台账）。
+   【切片与补充处置】任务卡必填 deadline_hint；预计 >10min 主动切段（checkpoint 结果卡）。用户中途补充：同步架构下你当时不在场——补充在结果回收时处置：不改方向→合并带入后续切片；改方向→停+已有产物重组卡（先 mini-review）续跑；取消→立即停。如实告知用户已发生的浪费。
+   【自优化】教训沉淀 instinct YAML；/moa optimize 只读分析+待注入清单，**用户批准才 apply**（备份+校验+回滚）；档位表每 10 任务按台账校准；08-21 用 verdict 台账裁决 critic R2 门禁（最小样本 60，数据不足=默认永久放弃）。
+   【规则零增长预算】新增规则必须合并/替换旧条目，本规则总长只减不增。
 4. 实证纪律：git 提交说明、代码注释、“验证通过”字样一律不算实证，必须验代码/SQL/配置本体。
 5. 抽查机制（captain 保留验证权 + 子模型协同抽查）：
    - captain 对子模型结果卡中的关键实证（文件:行号、数据、结论）风险导向抽查 10-30%，亲自复核原文
@@ -194,7 +197,7 @@ const ORCHESTRATION_RULES = `
    - 发现一处造假/误判 → 该子模型本次产出全量复核，并在任务记录中记录误判事件（供 navigator 统计角色可信度）
    - 【子模型协同抽查（用户裁决 2026-08-06）】批次收官时，captain 指定抽查样本（含必抽项）派 1 个独立上下文的 analyst/critic 做实证点抽验（逐项给出 文件:行号 复核结论）；子模型可以在 captain 样本外自增 1-2 个它认为可疑的点（适当发挥，注明理由）；captain 的亲自抽查与子模型抽验结果并录终稿（两份复核率分别标注），冲突由 captain 裁决
    - 抽查结果写入终稿（“已抽查 N 项，复核率 X%”），未抽查的结论标注“未经复核”
-4. 任务卡必须含：goal / scope(可写路径) / context_files / 输出要求(结果卡≤300字)；派活时 subagent 工具的 task/tasks/chain 条目必须填 summary 字段（≤20字任务概括，用于 /moa status 状态面板显示）。
+4. 任务卡必须含：goal / scope(可写路径) / context_files / 输出要求(结果卡≤300字) / deadline_hint；派活时 subagent 工具的 task/tasks/chain 条目必须填 summary 字段（≤20字任务概括，用于 /moa status 状态面板显示）。
 5. 任务记录：任务开始先建 .pi/moa/<任务名>/ 目录，任务卡、结果卡、handoff 包落盘（task.md / results/*.md / handoffs/*.md），每个运行单元记录 session_id/run_id/actor/读写范围/risk_level/outputs。
 6. 你始终掌握全部通讯：子代理间不直连，冲突由你裁决；拿不准的升级给用户。
    【评审透明化（用户裁决 2026-08-06）】子模型间或子模型内部的多 agent 评审：①过程和结果必须上报 captain——不只是 verdict，含轮次推进、关键分歧、被否掉的方案及理由 ②结构化留痕：评审卡按 moa/templates/review-card.md 格式落盘（rounds/verdict/findings/误判事件），供 Navigator 监测审计优化 ③关键过程节点（前提被动摇、连续 fail、裁决逆转）你实时转告用户，不等终稿。
@@ -410,11 +413,21 @@ export default function (pi: ExtensionAPI) {
 		handler: async (args, ctx) => handle("review", (args ?? "").trim().split(/\s+/), ctx),
 	});
 
-	// 主会话注入调度规则；子代理进程跳过（避免规则套娃）
+	// 主会话注入：①进度上下文行（台账在跑时，让 captain 能如实答进度）②调度规则。
+	// 共存要点：两者各自幂等标记（同一轮 systemPrompt 已含标记即不重复追加），合并为一次 return，互不覆盖。
 	pi.on("before_agent_start", async (event) => {
 		if (!state.enabled || isSubagent()) return undefined;
-		if ((event.systemPrompt ?? "").includes("[pi-moa 协同模式已开启")) return undefined;
-		return { systemPrompt: (event.systemPrompt ?? "") + ORCHESTRATION_RULES };
+		const base = event.systemPrompt ?? "";
+		let additions = "";
+		if (!base.includes("[pi-moa 进度]")) {
+			const line = runningSubagentsLine();
+			if (line) additions += "\n\n" + line;
+		}
+		if (!base.includes("[pi-moa 协同模式已开启")) {
+			additions += ORCHESTRATION_RULES;
+		}
+		if (!additions) return undefined;
+		return { systemPrompt: base + additions };
 	});
 
 	// 状态栏指示

@@ -411,6 +411,7 @@ def load_runs(runs_path):
             "agent": str(p.get("agent", "")),
             "model": str(p.get("model", "")),
             "summary": str(p.get("summary", "")),
+            "verdict": str(p.get("verdict", "") or ""),
             "exitCode": p.get("exitCode"),
             "ts_start": st,
             "dur_s": dur,
@@ -565,7 +566,8 @@ def arch_analysis(runs, cards, pricing):
     res = {"models": {}, "k3_input_ratio": 0.0, "outliers_dur": [], "outliers_turns": [],
            "matrix": {}, "domain_dist": {}, "max_concurrency": 0,
            "unpriced_models": [], "zero_cost_priced": [],
-           "kpi": {"status": "ok", "ratio": 0.0}, "blocked_points": []}
+           "kpi": {"status": "ok", "ratio": 0.0}, "blocked_points": [],
+           "verdict_dist": {}}
 
     # --- 成本架构（按 model；口径：仅已计价模型计真实成本）---
     per_model = {}
@@ -631,6 +633,14 @@ def arch_analysis(runs, cards, pricing):
     res["matrix"] = matrix
 
     res["max_concurrency"] = parallel_stats(runs)
+
+    # --- verdict 分布（台账 end 记录，按角色 × verdict 计数；缺省 unknown，与写入侧归一化口径一致）---
+    for r in runs:
+        if not r["has_end"]:
+            continue
+        v = r.get("verdict") or "unknown"
+        key = ((r["agent"] or "unknown"), v)
+        res["verdict_dist"][key] = res["verdict_dist"].get(key, 0) + 1
     return res
 
 
@@ -817,6 +827,19 @@ def render_report(mode, dry, lessons_in, lessons_out, arch, sug, runs, cards,
         L.append("| {} | {} |".format(a, " | ".join(cells)))
     L.append("\n任务域分布（按结果卡）：" + "，".join("{}={}".format(k, v) for k, v in sorted(arch["domain_dist"].items(), key=lambda x: -x[1])))
 
+    L.append("\n### verdict 分布（台账 end 记录，按角色 × verdict；缺省 unknown 与写入侧归一化口径一致）\n")
+    v_agents = sorted({a for (a, _) in arch["verdict_dist"].keys()})
+    v_order = {"pass": 0, "pass_with_notes": 1, "conditional": 2, "disagree": 3, "fail": 4, "unknown": 5}
+    v_values = sorted({v for (_, v) in arch["verdict_dist"].keys()}, key=lambda x: v_order.get(x, 6))
+    if v_agents:
+        L.append("| 角色 \\ verdict | " + " | ".join(v_values) + " |")
+        L.append("|-" + "---|" * len(v_values))
+        for a in v_agents:
+            cells = [str(arch["verdict_dist"].get((a, v), 0)) for v in v_values]
+            L.append("| {} | {} |".format(a, " | ".join(cells)))
+    else:
+        L.append("无（台账无 end 记录或均无 verdict 字段）")
+
     L.append("\n### 效率\n")
     L.append("- 最大并行（同 pid 重叠窗口）：{}".format(arch["max_concurrency"]))
     if arch["blocked_points"]:
@@ -961,9 +984,10 @@ def main():
         len(instincts), len(pending), len(applied), len(lessons_out), len(archived_ids), len(drop_warnings)))
     for w in drop_warnings:
         print("  ⚠ " + w)
-    print("层2：runs {} 条（{} 完成）；K3 输入占比 {:.1%}（KPI≤30%/告警50%）；最大并发 {}；时长离群 {} 条；turns 离群 {} 条；blocked/handoff 点 {} 个".format(
+    print("层2：runs {} 条（{} 完成）；K3 输入占比 {:.1%}（KPI≤30%/告警50%）；最大并发 {}；时长离群 {} 条；turns 离群 {} 条；blocked/handoff 点 {} 个；verdict 分布 {} 组".format(
         len(runs), sum(1 for r in runs if r["has_end"]), arch["k3_input_ratio"],
-        arch["max_concurrency"], len(arch["outliers_dur"]), len(arch["outliers_turns"]), len(arch["blocked_points"])))
+        arch["max_concurrency"], len(arch["outliers_dur"]), len(arch["outliers_turns"]), len(arch["blocked_points"]),
+        len(arch["verdict_dist"])))
     for m, pm in sorted(arch["models"].items()):
         if pm.get("priced"):
             print("  模型 {}: {} 任务 / {} tok / {:.4f} 元 / {:.0f}s（已计价）".format(
